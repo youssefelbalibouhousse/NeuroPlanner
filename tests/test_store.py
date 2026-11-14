@@ -134,6 +134,41 @@ def test_unwritable_location_does_not_raise(tmp_path: Path) -> None:
     assert store.is_done(KNOWN_TID)
 
 
+def test_write_json_atomic_reports_failure_without_raising(tmp_path: Path) -> None:
+    """Régression : le nettoyage du fichier temporaire lève sur Linux (NotADirectoryError)."""
+    from neuroplanner.data.jsonfile import write_json_atomic
+
+    blocker = tmp_path / "fichier"
+    blocker.write_text("x", encoding="utf-8")
+
+    assert write_json_atomic(blocker / "sous" / "plan.json", {"a": 1}) is False
+    assert blocker.read_text(encoding="utf-8") == "x"
+
+
+def test_write_json_atomic_succeeds_and_leaves_no_temp_file(tmp_path: Path) -> None:
+    from neuroplanner.data.jsonfile import write_json_atomic
+
+    target = tmp_path / "dossier" / "plan.json"
+    assert write_json_atomic(target, {"a": 1}) is True
+    assert json.loads(target.read_text(encoding="utf-8")) == {"a": 1}
+    assert not target.with_suffix(".tmp").exists()
+
+
+def test_read_json_handles_missing_and_invalid(tmp_path: Path) -> None:
+    from neuroplanner.data.jsonfile import read_json
+
+    missing = tmp_path / "absent.json"
+    assert read_json(missing) is None
+
+    invalid = tmp_path / "invalid.json"
+    invalid.write_text("{pas du json", encoding="utf-8")
+    assert read_json(invalid) is None
+
+    array = tmp_path / "array.json"
+    array.write_text("[1, 2]", encoding="utf-8")
+    assert read_json(array) is None
+
+
 def test_stats_payload_is_validated(data_file: Path) -> None:
     data_file.write_text(
         json.dumps({"completed": {}, "stats": {"sessions": "beaucoup", "focus_seconds": -5}}),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -32,5 +33,8 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> bool:
         os.replace(tmp, path)
         return True
     except OSError:
-        tmp.unlink(missing_ok=True)
+        # Le nettoyage doit être protégé lui aussi : si un dossier du chemin est
+        # en réalité un fichier, ``unlink`` lève NotADirectoryError (Linux).
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
         return False
