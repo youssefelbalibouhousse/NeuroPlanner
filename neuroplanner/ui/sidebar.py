@@ -85,6 +85,7 @@ class Sidebar(ctk.CTkFrame):
         on_select: Callable[[str], None],
         on_reset: Callable[[], None],
         on_manage_domains: Callable[[], None] | None = None,
+        on_import: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(master, fg_color=PALETTE.sidebar, corner_radius=0)
         self.grid_columnconfigure(0, weight=1)
@@ -95,7 +96,7 @@ class Sidebar(ctk.CTkFrame):
         self._build_brand()
         self._build_nav(on_select)
         self._build_summary()
-        self._build_actions(on_reset, on_manage_domains)
+        self._build_actions(on_reset, on_manage_domains, on_import)
 
     # -- construction ------------------------------------------------------ #
     def _build_brand(self) -> None:
@@ -165,7 +166,25 @@ class Sidebar(ctk.CTkFrame):
         self,
         on_reset: Callable[[], None],
         on_manage_domains: Callable[[], None] | None,
+        on_import: Callable[[], None] | None = None,
     ) -> None:
+        self.import_button = ctk.CTkButton(
+            self,
+            text="Importer un programme…",
+            height=38,
+            corner_radius=11,
+            fg_color="transparent",
+            border_width=1,
+            border_color=PALETTE.border,
+            hover_color=PALETTE.raised,
+            text_color=PALETTE.muted,
+            font=font(11),
+            command=on_import,
+        )
+        self.import_button.grid(row=5, column=0, sticky="ew", padx=14, pady=(0, 8))
+        if on_import is None:
+            self.import_button.grid_remove()
+
         self.domains_button = ctk.CTkButton(
             self,
             text="Domaines…",
@@ -179,7 +198,7 @@ class Sidebar(ctk.CTkFrame):
             font=font(11, "bold"),
             command=on_manage_domains,
         )
-        self.domains_button.grid(row=5, column=0, sticky="ew", padx=14, pady=(0, 8))
+        self.domains_button.grid(row=6, column=0, sticky="ew", padx=14, pady=(0, 8))
         if on_manage_domains is None:
             self.domains_button.grid_remove()
 
@@ -195,11 +214,11 @@ class Sidebar(ctk.CTkFrame):
             text_color=PALETTE.muted,
             font=font(11),
             command=on_reset,
-        ).grid(row=6, column=0, sticky="ew", padx=14, pady=(0, 12))
+        ).grid(row=7, column=0, sticky="ew", padx=14, pady=(0, 12))
 
         ctk.CTkLabel(
             self, text="Ctrl + 1…6 : changer de jour", font=font(9), text_color=PALETTE.dim
-        ).grid(row=7, column=0, pady=(0, 16))
+        ).grid(row=8, column=0, pady=(0, 16))
 
     # -- mise à jour ------------------------------------------------------- #
     def update_day(self, day_key: str, progress: Progress, *, selected: bool) -> None:

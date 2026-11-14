@@ -41,19 +41,28 @@ class ModalDialog(ctk.CTkToplevel):
         self.after(10, self._center)
 
     def _center(self) -> None:
-        """Centre la fenêtre en pixels physiques (CustomTkinter met à l'échelle)."""
+        """Centre la fenêtre en pixels physiques, en la gardant dans l'écran."""
         with contextlib.suppress(tk.TclError):
             if not self.winfo_exists():
                 return
         factor = max(1.0, float(self._get_window_scaling() or 1.0))
         self._current_width, self._current_height = self._width, self._height
-        width, height = int(self._width * factor), int(self._height * factor)
+        width = int(self._width * factor)
+        height = int(self._height * factor)
+
+        # Un écran 1280x720 à 150 % ne laisse que 480 px logiques : on borne.
+        screen_w, screen_h = self.winfo_screenwidth(), self.winfo_screenheight()
+        width = min(width, max(320, screen_w - 40))
+        height = min(height, max(320, screen_h - 60))
 
         parent = self.master
         with contextlib.suppress(tk.TclError):
             x = parent.winfo_rootx() + max(0, (parent.winfo_width() - width) // 2)
             y = parent.winfo_rooty() + max(0, (parent.winfo_height() - height) // 3)
-            tk.Toplevel.geometry(self, f"{width}x{height}+{max(0, x)}+{max(0, y)}")
+            tk.Toplevel.geometry(
+                self,
+                f"{width}x{height}+{max(0, min(x, screen_w - width))}+{max(0, min(y, screen_h - height))}",
+            )
 
     def run(self) -> bool:
         """Affiche la fenêtre et attend sa fermeture ; renvoie ``changed``."""

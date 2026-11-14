@@ -3,6 +3,36 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ;
 le projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.2.0] — 2026-11-15
+
+### Ajouté
+
+- **Import d'un programme** : dialogue dédié (`Importer un programme…`) qui
+  transforme une table des matières en planning complet, avec aperçu des 30 tâches
+  avant application.
+- **Assistant LLM local** (Ollama, gratuit et hors ligne) : le modèle propose les
+  chapitres, l'application construit le planning (`services/generation.py`).
+  Option « raisonnement étendu » (`think`) pour les modèles qui le supportent.
+- `services/chapters.py` : parser tolérant (puces, numéros, `(90 min)`, `1 h 30`).
+- `services/llm.py` : client Ollama sans dépendance (urllib), transport injectable,
+  messages d'erreur actionnables (`ollama serve`, `ollama pull`), extraction JSON
+  robuste aux raisonnements contenant des crochets.
+- `PlanStore.replace_week(..., prune_unused_domains=True)` : un import peut ne
+  conserver que les piliers réellement utilisés.
+- Variables `NEUROPLANNER_OLLAMA_URL`, `NEUROPLANNER_LLM_MODEL`,
+  `NEUROPLANNER_LLM_THINK`.
+- Les boîtes modales sont bornées à l'écran (utile en 1280×720 à 150 %).
+
+### Technique
+
+- 260 tests (dont 39 d'intégration GUI sur l'édition et l'import) ; aucun test ne
+  contacte le réseau : `OllamaClient` accepte un transport factice.
+
+### Modifié
+
+- `domain_progress` et le graphique gèrent les piliers vides (« vide » en gris).
+- La version est exposée par `neuroplanner.__version__` et `--version`.
+
 ## [1.1.0] — 2026-11-14
 
 ### Ajouté

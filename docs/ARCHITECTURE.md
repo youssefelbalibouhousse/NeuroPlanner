@@ -9,7 +9,7 @@ de données, le format du plan et les recettes pour les changements fréquents.
 ┌────────────────────────────────────────────────────────────────┐
 │ ui/            widgets CustomTkinter (aucune décision métier)  │
 │  sidebar  header  day_view  block_card  task_row               │
-│  timer_panel  chart  dialogs  widgets (helpers d'interaction)  │
+│  timer_panel  chart  dialogs  import_dialog  widgets           │
 └──────────────▲────────────────────────────┬───────────────────┘
                │ callbacks                  │ lecture
 ┌──────────────┴────────────────────────────▼───────────────────┐
@@ -20,12 +20,15 @@ de données, le format du plan et les recettes pour les changements fréquents.
 │ services/        │ │ data/           │ │ data/               │
 │  stats  (purs)   │ │  plan_store     │ │  store              │
 │  countdown (pur) │ │  curriculum     │ │  (progression)      │
-│  sound           │ │  presets        │ │  jsonfile (E/S)     │
-└──────▲───────────┘ └──────┬──────────┘ └──────────┬──────────┘
-       │                    │                       │
-   ┌───┴────────────────────▼───────────────────────▼──┐
-   │ models.py (dataclasses immuables)                 │
-   └───────────────────────────────────────────────────┘
+│  chapters        │ │  presets        │ │  jsonfile (E/S)     │
+│  generation      │ └─────────────────┘ └─────────────────────┘
+│  llm             │
+│  sound           │
+└──────▲───────────┘
+       │
+   ┌───┴───────────────────────────────────────────────────────┐
+   │ models.py (dataclasses immuables, dont Chapter)           │
+   └───────────────────────────────────────────────────────────┘
 ```
 
 Règles de dépendance :
@@ -123,41 +126,58 @@ progression existants). Toute tâche créée ensuite reçoit un identifiant
 `t<8 hex>` qui ne dépend plus de sa position : ajouter ou supprimer des tâches ne
 décale jamais les coches existantes.
 
-## Brancher un LLM (feuille de route)
+## Pipeline d'import (chapitres → planning)
 
-L'app ne contient volontairement **aucun appel réseau** pour l'instant. Le point
-d'extension est déjà en place : produire des `models.Block` par jour, puis appeler
-`PlanStore.replace_week()`.
-
-```python
-from neuroplanner.models import Block, Task
-
-week = {
-    "lun": [Block("07:30", "08:45", "Chapitre 1", "Encodage", (
-        Task("Limites et continuité", "Mathématiques", 45),
-        Task("Exercices 1–5", "Mathématiques", 30),
-    ))],
-    # … mardi → samedi
-}
-plan.replace_week(week)   # domaines inconnus enregistrés, ids générés, fichier écrit
+```text
+ texte collé  ─┐
+               ├─► services/chapters.parse_chapters ─┐
+ LLM (Ollama) ─┘                                    │  list[Chapter]
+                                                    ▼
+                              services/generation.build_week(domain, revision)
+                                                    │  dict[jour] -> tuple[Block]
+                                                    ▼
+                              ui/import_dialog : aperçu (describe_week)
+                                                    │  « Appliquer » + confirmation
+                                                    ▼
+                       PlanStore.replace_week(week, prune_unused_domains=…)
+                                                    │
+                    app.on_plan_changed() ─ ProgressStore.prune + vues reconstruites
 ```
 
-Implémentation suggérée, par ordre de valeur :
+Trois décisions structurent l'implémentation :
 
-1. `services/generation.py` : un `Protocol` `PlanGenerator` exposant
-   `generate(chapters, *, minutes_per_day) -> dict[str, Iterable[Block]]`, plus un
-   `parse_chapters(text)` tolérant (liste à puces, titres, JSON) pour transformer une
-   table des matières collée dans l'UI.
-2. Fournisseurs interchangeables : **Ollama** en local (`http://localhost:11434`,
-   modèle `llama3.2`/`qwen2.5`, gratuit et hors ligne), ou une API à palier gratuit
-   (Groq, Gemini) via une clé stockée dans une variable d'environnement — jamais
-   dans le dépôt.
-3. UI : un bouton « Importer un programme » dans le dialogue des domaines, avec
-   **aperçu avant application** (le JSON proposé est affiché, puis validé par
-   `replace_week`), et un retour arrière via une copie de `neuro_plan.json`.
-4. Garde-fous : valider la sortie du modèle comme le fait `_load` (durées, domaines,
-   nombre de blocs), plafonner à 4 blocs et 300 min par jour, et refuser toute
-   réponse non conforme — ne jamais écrire un plan invalide.
+1. **Le LLM ne produit que des chapitres**, jamais le planning. Un petit modèle
+   local est fiable sur une liste de titres, beaucoup moins sur une grille horaire
+   valide ; l'algorithme garantit les 5 h/jour et la présence de tous les chapitres.
+2. **Rien n'est appliqué sans relecture** : la sortie du modèle atterrit dans la
+   zone de texte, puis l'aperçu montre les 30 tâches avant confirmation.
+3. **Aucun appel réseau dans les tests** : `OllamaClient` accepte un `transport`
+   injectable (`Callable[[url, payload, timeout], dict]`).
+
+### Contrat à respecter pour un autre fournisseur
+
+N'importe quel client exposant `complete(prompt: str) -> str` fonctionne
+(`generate_outline` l'accepte en paramètre). Pour un fournisseur hébergé, il suffit
+de traduire la réponse vers le même texte, le reste du pipeline est inchangé :
+
+```python
+class GroqClient:            # même contrat que OllamaClient
+    def complete(self, prompt: str) -> str: ...
+    def models(self) -> list[str]: ...
+```
+
+Le prompt (`llm.build_prompt`) impose un tableau JSON `[{"titre": …, "minutes": …}]`.
+`parse_outline` accepte aussi une liste à puces et privilégie les tableaux d'objets
+portant une clé `titre`, pour ne pas confondre un brouillon de raisonnement
+(`[étape 1]`) avec la réponse finale.
+
+### Modèles et mode raisonnement
+
+`LlmSettings(think=True)` transmet `"think": true` à Ollama (modèles `thinking`).
+Mesuré sur la machine de développement, 6 chapitres : `qwen2.5:3b` ≈ 17 s,
+`gemma4` ≈ 142 s, `gemma4` + raisonnement ≈ 161 s. Le raisonnement améliore
+l'enchaînement des chapitres ; il est donc proposé en option, jamais imposé.
+Timeout par défaut : 300 s (`LlmSettings.timeout`).
 
 ## Détails d'implémentation notables
 
@@ -190,20 +210,26 @@ Implémentation suggérée, par ordre de valeur :
 |---|---|---|
 | `test_curriculum.py` | graine : 6 jours, 4 blocs, 5 h, piliers, identifiants | non |
 | `test_plan_store.py` | domaines, tâches, validation, persistance, `replace_week` | non |
+| `test_chapters.py` | table des matières : puces, numéros, durées, doublons | non |
+| `test_generation.py` | 5 h/jour, contenu complet, reliquats, déterminisme | non |
+| `test_llm.py` | prompt, extraction JSON, erreurs réseau (transport factice) | non |
 | `test_stats.py` | agrégations, bornes, domaines vides | non |
 | `test_countdown.py` | pause/reprise/fin, horloge simulée | non |
 | `test_store.py` | écriture atomique, quarantaine, `prune`/`forget` | non |
 | `test_core.py` | formats, chemins, palette | non |
 | `test_ui_smoke.py` | fenêtre réelle : coche, navigation, reset, minuteur, reprise | **oui** |
 | `test_ui_editing.py` | dialogues domaines/tâches et propagation aux vues | **oui** |
+| `test_ui_import.py` | import : aperçu, application, assistant LLM (stub), prune | **oui** |
 
 ```powershell
-python -m pytest                  # tout
+python -m pytest                  # tout (260 tests)
 python -m pytest -m "not gui"     # sans écran (utilisé par la CI)
 ```
 
-**Piège des tests modaux** : ne jamais déclencher un bouton qui ouvre un vrai
+**Pièges des tests modaux** : ne jamais déclencher un bouton qui ouvre un vrai
 `run()` (il appellerait `wait_window()` et bloquerait la suite). Soit on instancie
 le dialogue et on appelle ses méthodes directement, soit on remplace
-`neuroplanner.app.TaskDialog` / `DomainDialog` par un stub (voir
-`test_ui_editing.py`).
+`neuroplanner.app.TaskDialog` / `DomainDialog` / `ImportDialog` par un stub (voir
+`test_ui_editing.py`, `test_ui_import.py`). Toute action destructrice
+(`replace_week`, `reset_week`) appelle `messagebox.askyesno` : il faut la
+monkeypatcher, sinon la boîte native bloque le test.

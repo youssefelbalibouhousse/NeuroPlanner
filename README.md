@@ -26,6 +26,9 @@ d'encodage/consolidation/récupération, graphique de refocalisation par pilier 
   pilier (la suppression retire ses tâches après confirmation).
 - **Tâches modifiables** : ajout (`+` sur un bloc), édition et suppression (`✎` sur une
   ligne), avec contrôle du pilier et de la durée.
+- **Import de programme** : colle une table des matières ou laisse un **LLM local
+  (Ollama)** proposer les chapitres ; l'application répartit le tout sur les 6 jours,
+  avec aperçu avant application.
 - **Statistiques en direct** : avancement du jour, de la semaine, par pilier.
 - **Minuteurs** : Focus 45, Pause 10, Feuille blanche 3 ; Démarrer / Pause / Reset, bip de fin.
 - **Graphique de refocalisation** (Matplotlib) : rouge < 50 %, orange 50–79 %, vert ≥ 80 %,
@@ -33,9 +36,9 @@ d'encodage/consolidation/récupération, graphique de refocalisation par pilier 
 - **Réinitialisation de la semaine** avec confirmation (les statistiques de focus sont conservées).
 - **Raccourcis** `Ctrl+1` … `Ctrl+6` pour changer de jour.
 
-| Gestion des domaines | Édition d'une tâche |
-|---|---|
-| ![Domaines](docs/dialog_domains.png) | ![Tâche](docs/dialog_task.png) |
+| Gestion des domaines | Édition d'une tâche | Import d'un programme |
+|---|---|---|
+| ![Domaines](docs/dialog_domains.png) | ![Tâche](docs/dialog_task.png) | ![Import](docs/dialog_import.png) |
 
 ## Installation
 
@@ -129,14 +132,18 @@ NeuroPlanner/
 │   │   ├── store.py            # progression persistée
 │   │   └── jsonfile.py         # lecture/écriture JSON atomique
 │   ├── services/
+│   │   ├── chapters.py         # lecture d'une table des matières
+│   │   ├── generation.py       # chapitres → planning 5 h/jour
+│   │   ├── llm.py              # client Ollama (chapitres par LLM local)
 │   │   ├── countdown.py        # minuteur pur (testable sans écran)
 │   │   ├── stats.py            # agrégations de progression
 │   │   └── sound.py            # signal sonore de fin
 │   ├── ui/                     # sidebar, day_view, block_card, task_row,
-│   │                           # timer_panel, chart, header, dialogs, widgets
+│   │                           # timer_panel, chart, header, dialogs,
+│   │                           # import_dialog, widgets
 │   └── assets/                 # icône et logo
-├── tests/                      # 179 tests (dont intégration GUI)
-├── docs/ARCHITECTURE.md        # modules, format du plan, branchement d'un LLM
+├── tests/                      # 260 tests (dont intégration GUI)
+├── docs/ARCHITECTURE.md        # modules, format du plan, pipeline d'import
 └── tools/make_icon.py          # régénère l'icône
 ```
 
@@ -159,6 +166,51 @@ Dans le code :
 - **Seuils de refocalisation** → `REFOCUS_BELOW` / `MASTERY_FROM` dans
   `neuroplanner/services/stats.py`.
 
+## Générer un programme avec un LLM local
+
+Principe : **le modèle propose la structure (chapitres), l'application construit le
+planning**. Le résultat est donc prévisible, vérifiable dans l'aperçu, et
+indépendant du modèle utilisé.
+
+### 1. Installer un modèle local (gratuit, hors ligne)
+
+```powershell
+winget install Ollama.Ollama      # ou https://ollama.com/download
+ollama pull qwen2.5:3b            # rapide (~17 s pour 12 chapitres)
+ollama serve                      # généralement lancé automatiquement
+```
+
+### 2. Utiliser l'assistant
+
+Barre latérale → **« Importer un programme… »** → décris le sujet → **Générer**.
+Les chapitres proposés s'écrivent dans la zone de texte : relis-les, corrige-les,
+puis **Aperçu** et **Appliquer au planning**.
+
+Le mode « Table des matières » fonctionne sans LLM : colle simplement ta liste
+(`1. Limites (90 min)`, `- Intégrales — 1 h 30`, …), la durée est facultative.
+
+### Réglages
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `NEUROPLANNER_OLLAMA_URL` | `http://localhost:11434` | serveur Ollama (réseau local ou distant) |
+| `NEUROPLANNER_LLM_MODEL` | `qwen2.5:3b` | modèle proposé par défaut |
+| `NEUROPLANNER_LLM_THINK` | *(vide)* | `1` active le raisonnement étendu par défaut |
+
+L'option **« Raisonnement étendu »** du dialogue correspond au paramètre `think`
+d'Ollama (modèles `thinking`). Mesures sur une machine de test, 6 chapitres :
+
+| Modèle | Mode | Durée | Qualité |
+|---|---|---|---|
+| `qwen2.5:3b` | normal | ~17 s | correct, chapitres un peu génériques |
+| `gemma4` | normal | ~142 s | bon découpage |
+| `gemma4` | raisonnement | ~161 s | meilleur enchaînement (suites → séries) |
+
+Aucune clé d'API n'est nécessaire et aucun appel ne quitte la machine. Un
+fournisseur hébergé (Groq, Gemini…) reste possible : il suffit d'implémenter le
+même contrat `complete(prompt) -> str` — voir
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#pipeline-dimport).
+
 ## Développement
 
 ```powershell
@@ -172,15 +224,16 @@ python -m pytest --cov=neuroplanner --cov-report=term-missing
 
 Les tests d'interface sont marqués `gui` : ils construisent une vraie fenêtre Tk
 avec des fichiers temporaires, cochent des tâches, changent de jour, éditent le
-plan via les dialogues et font tourner un minuteur accéléré.
+plan via les dialogues, importent un programme et font tourner un minuteur
+accéléré. Les appels au LLM sont simulés (transport factice) : la suite ne
+nécessite ni réseau ni modèle installé.
 
 ## Feuille de route
 
 - [x] Planning modifiable : domaines, tâches, durées.
-- [ ] **Génération du planning par un LLM gratuit** (chapitre par chapitre) : le plan
-      est déjà un document JSON stable et `PlanStore.replace_week()` est le point
-      d'entrée prévu — voir
-      [la feuille de route détaillée](docs/ARCHITECTURE.md#brancher-un-llm-feuille-de-route).
+- [x] **Génération du planning** à partir de chapitres, avec assistant LLM local
+      (Ollama) et aperçu avant application.
+- [ ] Fournisseur hébergé à palier gratuit (Groq / Gemini) derrière le même contrat.
 - [ ] Historique multi-semaines et courbe de rétention.
 - [ ] Thème clair commutable et export CSV.
 - [ ] Packaging `PyInstaller` (exécutable Windows autonome).

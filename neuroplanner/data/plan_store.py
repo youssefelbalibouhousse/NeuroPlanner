@@ -361,11 +361,18 @@ class PlanStore:
         return False
 
     # -- remplacement global (futur import LLM) ---------------------------- #
-    def replace_week(self, week: Mapping[str, Iterable[Block]]) -> None:
+    def replace_week(
+        self,
+        week: Mapping[str, Iterable[Block]],
+        *,
+        prune_unused_domains: bool = False,
+    ) -> None:
         """Remplace tout le planning ; les domaines inconnus sont enregistrés.
 
         Point d'entrée prévu pour un générateur externe (LLM, import de
         chapitres) : il suffit de fournir, par jour, la liste des blocs.
+        Avec ``prune_unused_domains``, les piliers qui ne contiennent plus aucune
+        tâche sont retirés (le dernier pilier est toujours conservé).
         """
         unknown_days = [key for key in week if key not in DAY_KEYS]
         if unknown_days:
@@ -392,6 +399,20 @@ class PlanStore:
                 }
                 for block in blocks
             ]
+
+        if prune_unused_domains:
+            # On conserve l'ordre d'apparition dans le nouveau planning : le
+            # pilier étudié arrive avant celui du rappel.
+            order: list[str] = []
+            for blocks in self._days.values():
+                for block in blocks:
+                    for task in block["tasks"]:
+                        if task["domain"] not in order:
+                            order.append(task["domain"])
+            by_name = {domain.name: domain for domain in self._domains}
+            kept = [by_name[name] for name in order if name in by_name]
+            self._domains = kept or self._domains[:1]
+
         self._week = None
         self.save()
 

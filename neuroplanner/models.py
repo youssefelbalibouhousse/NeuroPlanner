@@ -87,3 +87,11 @@ class Domain:
 
     name: str
     color: str
+
+
+@dataclass(frozen=True, slots=True)
+class Chapter:
+    """Chapitre d'un programme, avec une durée indicative optionnelle."""
+
+    title: str
+    minutes: int | None = None

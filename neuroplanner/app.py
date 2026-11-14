@@ -27,6 +27,7 @@ from neuroplanner.ui.chart import DomainChart
 from neuroplanner.ui.day_view import DayView
 from neuroplanner.ui.dialogs import DomainDialog, TaskDialog
 from neuroplanner.ui.header import Header
+from neuroplanner.ui.import_dialog import ImportDialog
 from neuroplanner.ui.sidebar import Sidebar
 from neuroplanner.ui.timer_panel import TimerPanel
 
@@ -122,6 +123,7 @@ class NeuroPlanner(ctk.CTk):
             on_select=self.show_day,
             on_reset=self.reset_week,
             on_manage_domains=self.manage_domains,
+            on_import=self.import_program,
         )
         self.sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew")
 
@@ -182,6 +184,12 @@ class NeuroPlanner(ctk.CTk):
     def add_task(self, day_key: str, block_index: int) -> None:
         """Ouvre la création d'une tâche dans un bloc donné."""
         dialog = TaskDialog(self, self.plan, day_key, block_index)
+        if dialog.run():
+            self.on_plan_changed()
+
+    def import_program(self) -> None:
+        """Ouvre l'assistant d'import (table des matières ou LLM local)."""
+        dialog = ImportDialog(self, self.plan)
         if dialog.run():
             self.on_plan_changed()
 
