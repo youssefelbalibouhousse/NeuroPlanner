@@ -80,20 +80,32 @@ def domain_progress(
     """Progression par pilier.
 
     Sans ``order``, les piliers suivent leur ordre d'apparition dans le plan ;
-    sinon, l'ordre fourni (les piliers non listés passent en dernier).
+    sinon, **tous** les piliers de l'ordre sont renvoyés — y compris ceux qui
+    n'ont encore aucune tâche (progression ``0/0``), pour qu'un domaine
+    nouvellement créé apparaisse dans le graphique.
     """
     buckets: dict[str, list[TaskNode]] = {}
     for day in days:
         for task in day.tasks:
             buckets.setdefault(task.domain, []).append(task)
 
-    if order is None:
-        names = list(buckets)
-    else:
-        known = [name for name in order if name in buckets]
-        names = known + [name for name in buckets if name not in known]
+    # L'ordre explicite fait foi, y compris pour les piliers encore vides.
+    names = list(buckets) if order is None else _dedupe([*order, *buckets])
 
     return [
-        DomainProgress(domain=name, progress=progress_of(buckets[name], completed))
+        DomainProgress(
+            domain=name,
+            progress=progress_of(buckets.get(name, ()), completed),
+        )
         for name in names
     ]
+
+
+def _dedupe(names: Sequence[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for name in names:
+        if name not in seen:
+            seen.add(name)
+            unique.append(name)
+    return unique

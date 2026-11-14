@@ -1,7 +1,7 @@
-"""Plan d'apprentissage de la semaine.
+"""Plan d'apprentissage **par défaut** de la semaine (graine du plan modifiable).
 
-Tout le contenu pédagogique vit ici. Chaque journée est décrite par 4 blocs
-(1 h 15 + 1 h 15 + 1 h 30 + 1 h = 5 h) couvrant les 5 piliers :
+Chaque journée est décrite par 4 blocs (1 h 15 + 1 h 15 + 1 h 30 + 1 h = 5 h)
+couvrant les 5 piliers d'origine :
 
 * Dev & Archi
 * IA & World Models
@@ -9,8 +9,10 @@ Tout le contenu pédagogique vit ici. Chaque journée est décrite par 4 blocs
 * Arabe MSA
 * Révision Active
 
-Pour modifier le programme, il suffit d'éditer ``RAW_WEEK`` ci-dessous : les
-identifiants, les statistiques et le graphique sont recalculés automatiquement.
+Ce module ne contient plus le planning « vivant » : à l'exécution, le plan est
+chargé depuis ``neuro_plan.json`` (voir :mod:`neuroplanner.data.plan_store`) et
+l'utilisateur peut ajouter/supprimer domaines et tâches. Ce fichier sert de
+**graine** au premier lancement et de valeur de réinitialisation.
 """
 
 from __future__ import annotations
@@ -18,7 +20,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from neuroplanner.config import DAY_LABELS, DAYS
-from neuroplanner.models import Block, BlockNode, DayPlan, Task, TaskNode
+from neuroplanner.models import Block, BlockNode, DayPlan, Domain, Task, TaskNode
+from neuroplanner.theme import DEFAULT_DOMAIN_COLORS
 
 
 def _day(
@@ -169,7 +172,7 @@ def build_week(raw: Mapping[str, tuple[Block, ...]]) -> dict[str, DayPlan]:
 
 WEEK: dict[str, DayPlan] = build_week(RAW_WEEK)
 
-#: Jours dans l'ordre d'affichage.
+#: Jours du plan par défaut, dans l'ordre d'affichage.
 WEEK_DAYS: tuple[DayPlan, ...] = tuple(WEEK[day_key] for day_key, _ in DAYS)
 
 TASKS_BY_DAY: dict[str, tuple[TaskNode, ...]] = {day.key: day.tasks for day in WEEK_DAYS}
@@ -179,14 +182,13 @@ TASKS_BY_ID: dict[str, TaskNode] = {
 
 TOTAL_TASKS: int = len(TASKS_BY_ID)
 
-#: Piliers d'apprentissage, dans l'ordre d'affichage (graphique, légendes).
+#: Piliers par défaut, dans l'ordre d'affichage (graphique, légendes).
 #: L'ordre du plan, lui, place la « Révision Active » dès le premier bloc.
-DOMAINS: tuple[str, ...] = (
-    "Dev & Archi",
-    "IA & World Models",
-    "Projets",
-    "Arabe MSA",
-    "Révision Active",
+DOMAINS: tuple[str, ...] = tuple(DEFAULT_DOMAIN_COLORS)
+
+#: Domaines par défaut (nom + couleur) : graine du registre persistant.
+DEFAULT_DOMAINS: tuple[Domain, ...] = tuple(
+    Domain(name=name, color=color) for name, color in DEFAULT_DOMAIN_COLORS.items()
 )
 
 

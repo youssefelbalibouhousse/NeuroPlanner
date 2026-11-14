@@ -22,6 +22,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="fichier de progression à utiliser (défaut : dossier de données utilisateur)",
     )
     parser.add_argument(
+        "--plan-file",
+        type=Path,
+        default=None,
+        metavar="CHEMIN",
+        help=(
+            "fichier de plan (domaines, blocs, tâches) ; par défaut à côté de la "
+            "progression : neuro_plan.json"
+        ),
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version=f"%(prog)s {APP_VERSION}",
@@ -39,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:
 
     from neuroplanner.app import NeuroPlanner
 
-    app = NeuroPlanner(args.data_file)
+    app = NeuroPlanner(args.data_file, plan_file=args.plan_file)
     app.mainloop()
     return 0
 

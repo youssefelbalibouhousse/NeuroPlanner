@@ -65,12 +65,38 @@ def test_add_session_counts_only_long_sessions_as_focus(data_file: Path) -> None
     assert store.focus_seconds == FOCUS_SESSION_SECONDS
 
 
-def test_unknown_task_ids_are_dropped(data_file: Path) -> None:
+def test_unknown_task_ids_are_dropped_when_plan_is_known(data_file: Path) -> None:
     data_file.write_text(
         json.dumps({"completed": {"lun-0-0": True, "obsolète": True}}), encoding="utf-8"
     )
-    store = ProgressStore(data_file)
+    store = ProgressStore(data_file, valid_ids={"lun-0-0"})
     assert store.completed == {"lun-0-0"}
+
+
+def test_store_keeps_everything_without_a_plan(data_file: Path) -> None:
+    """Sans plan fourni, la validation est désactivée (compatibilité)."""
+    data_file.write_text(json.dumps({"completed": {"arbitraire": True}}), encoding="utf-8")
+    store = ProgressStore(data_file)
+    assert store.completed == {"arbitraire"}
+
+
+def test_prune_removes_orphans(data_file: Path) -> None:
+    store = ProgressStore(data_file)
+    store.set_done("lun-0-0", True)
+    store.set_done("t-abc", True)
+
+    assert store.prune({"lun-0-0"}) == 1
+    assert store.completed == {"lun-0-0"}
+    assert ProgressStore(data_file, valid_ids={"lun-0-0"}).completed == {"lun-0-0"}
+
+
+def test_forget_is_a_noop_for_unknown_ids(data_file: Path) -> None:
+    store = ProgressStore(data_file)
+    store.set_done("lun-0-0", True)
+    assert store.forget({"inconnu"}) == 0
+    assert store.completed == {"lun-0-0"}
+    assert store.forget({"lun-0-0"}) == 1
+    assert store.completed == set()
 
 
 def test_legacy_list_format_is_accepted(data_file: Path) -> None:

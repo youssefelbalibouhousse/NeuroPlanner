@@ -1,4 +1,4 @@
-"""Fenêtre principale : orchestre les vues et l'état persistant."""
+"""Fenêtre principale : orchestre le plan modifiable, la progression et les vues."""
 
 from __future__ import annotations
 
@@ -16,21 +16,23 @@ from neuroplanner.config import (
     asset_path,
     initial_day,
     resolve_data_file,
+    resolve_plan_file,
 )
-from neuroplanner.data.curriculum import DOMAINS, WEEK, WEEK_DAYS
+from neuroplanner.data.plan_store import PlanStore
 from neuroplanner.data.store import ProgressStore
 from neuroplanner.models import TaskNode
 from neuroplanner.services.stats import day_progress, domain_progress, week_progress
 from neuroplanner.theme import PALETTE
 from neuroplanner.ui.chart import DomainChart
 from neuroplanner.ui.day_view import DayView
+from neuroplanner.ui.dialogs import DomainDialog, TaskDialog
 from neuroplanner.ui.header import Header
 from neuroplanner.ui.sidebar import Sidebar
 from neuroplanner.ui.timer_panel import TimerPanel
 
 
 class NeuroPlanner(ctk.CTk):
-    """Application : navigation par jour, checklists persistées, minuteurs, graphique."""
+    """Application : navigation par jour, planning modifiable, minuteurs, graphique."""
 
     #: Largeur minimale des colonnes latérales (unités logiques).
     SIDEBAR_WIDTH = 220
@@ -40,6 +42,7 @@ class NeuroPlanner(ctk.CTk):
         self,
         data_file: Path | str | None = None,
         *,
+        plan_file: Path | str | None = None,
         today: date | None = None,
     ) -> None:
         super().__init__(fg_color=PALETTE.bg)
@@ -47,7 +50,9 @@ class NeuroPlanner(ctk.CTk):
         self._set_icon()
 
         self.today = today or date.today()
-        self.store = ProgressStore(resolve_data_file(data_file))
+        progress_path = resolve_data_file(data_file)
+        self.plan = PlanStore(resolve_plan_file(plan_file, progress_path))
+        self.store = ProgressStore(progress_path, valid_ids=self.plan.task_ids())
         self.current_day = initial_day(self.today.weekday())
         self._dpi_factor = 1.0
 
@@ -112,13 +117,23 @@ class NeuroPlanner(ctk.CTk):
             self._apply_window_geometry()
 
     def _build_layout(self) -> None:
-        self.sidebar = Sidebar(self, on_select=self.show_day, on_reset=self.reset_week)
+        self.sidebar = Sidebar(
+            self,
+            on_select=self.show_day,
+            on_reset=self.reset_week,
+            on_manage_domains=self.manage_domains,
+        )
         self.sidebar.grid(row=0, column=0, rowspan=2, sticky="nsew")
 
         self.header = Header(self, today=self.today)
         self.header.grid(row=0, column=1, columnspan=2, sticky="ew", padx=24, pady=(20, 10))
 
-        self.day_view = DayView(self, on_toggle=self._on_task_toggle)
+        self.day_view = DayView(
+            self,
+            on_toggle=self._on_task_toggle,
+            on_edit_task=self.edit_task,
+            on_add_task=self.add_task,
+        )
         self.day_view.grid(row=1, column=1, sticky="nsew", padx=(24, 18), pady=(0, 20))
 
         right = ctk.CTkScrollableFrame(
@@ -144,14 +159,54 @@ class NeuroPlanner(ctk.CTk):
     # -- navigation -------------------------------------------------------- #
     def show_day(self, day_key: str, *, force: bool = False) -> None:
         """Affiche ``day_key`` (idempotent sauf ``force``)."""
-        if day_key not in WEEK:
+        if day_key not in DAY_KEYS:
             return
         if not force and day_key == self.current_day:
             return
         self.current_day = day_key
-        self.day_view.show(WEEK[day_key], self.store.completed)
-        self.day_view.set_progress(day_progress(WEEK[day_key], self.store.completed))
+        self.day_view.show(
+            self.plan.day(day_key),
+            self.store.completed,
+            self.plan.colors(),
+        )
+        self.day_view.set_progress(day_progress(self.plan.day(day_key), self.store.completed))
         self._refresh_nav()
+
+    # -- édition du plan --------------------------------------------------- #
+    def manage_domains(self) -> None:
+        """Ouvre la gestion des domaines ; reconstruit les vues si besoin."""
+        dialog = DomainDialog(self, self.plan)
+        if dialog.run():
+            self.on_plan_changed()
+
+    def add_task(self, day_key: str, block_index: int) -> None:
+        """Ouvre la création d'une tâche dans un bloc donné."""
+        dialog = TaskDialog(self, self.plan, day_key, block_index)
+        if dialog.run():
+            self.on_plan_changed()
+
+    def edit_task(self, task: TaskNode) -> None:
+        """Ouvre l'édition d'une tâche existante (jour et bloc retrouvés par son id)."""
+        location = self._locate(task.tid)
+        if location is None:
+            return
+        day_key, block_index = location
+        dialog = TaskDialog(self, self.plan, day_key, block_index, task)
+        if dialog.run():
+            self.on_plan_changed()
+
+    def _locate(self, tid: str) -> tuple[str, int] | None:
+        for day in self.plan.week_days():
+            for block_index, block in enumerate(day.blocks):
+                if any(task.tid == tid for task in block.tasks):
+                    return day.key, block_index
+        return None
+
+    def on_plan_changed(self) -> None:
+        """Après une modification du plan : recharge les vues et purge les orphelins."""
+        self.store.prune(self.plan.task_ids())
+        self.show_day(self.current_day, force=True)
+        self.refresh_aggregates()
 
     # -- état -------------------------------------------------------------- #
     def _on_task_toggle(self, task: TaskNode, done: bool) -> None:
@@ -167,23 +222,28 @@ class NeuroPlanner(ctk.CTk):
     def refresh_aggregates(self) -> None:
         """Recalcule toutes les vues dérivées de la progression."""
         completed = self.store.completed
-        day = WEEK[self.current_day]
+        days = self.plan.week_days()
 
-        self.chart.refresh(domain_progress(WEEK_DAYS, completed, order=DOMAINS))
-        week = week_progress(WEEK_DAYS, completed)
+        self.chart.refresh(
+            domain_progress(days, completed, order=self.plan.domain_names)
+        )
+        week = week_progress(days, completed)
         self.header.set_week(week)
         self.sidebar.set_week(week, self.store.focus_seconds)
         self.timer.set_stats(self.store.sessions, self.store.focus_seconds)
         self._refresh_nav()
-        self.day_view.set_progress(day_progress(day, completed))
+        self.day_view.set_progress(day_progress(self.plan.day(self.current_day), completed))
 
     def _refresh_nav(self) -> None:
-        for day in WEEK_DAYS:
+        for day in self.plan.week_days():
             self.sidebar.update_day(
                 day.key,
                 day_progress(day, self.store.completed),
                 selected=day.key == self.current_day,
             )
+        self.sidebar.domains_button.configure(
+            text=f"Domaines… ({len(self.plan.domains)})"
+        )
 
     def reset_week(self) -> None:
         """Réinitialise la semaine après confirmation (les stats de focus restent)."""

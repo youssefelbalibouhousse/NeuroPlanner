@@ -1,47 +1,64 @@
 # Architecture
 
 Document destiné à celui qui **modifie** le projet. Il décrit les couches, le flux
-de données et les recettes pour les changements les plus fréquents.
+de données, le format du plan et les recettes pour les changements fréquents.
 
 ## Couches
 
 ```text
-┌──────────────────────────────────────────────────────────────┐
-│ ui/            widgets CustomTkinter (aucune décision métier)│
-│  sidebar  header  day_view  block_card  task_row            │
-│  timer_panel  chart  widgets (helpers d'interaction)        │
-└───────────────▲───────────────────────────┬──────────────────┘
-                │ callbacks                 │ lecture
-┌───────────────┴───────────────────────────▼──────────────────┐
-│ app.py         orchestration : état courant, jour affiché    │
-└───────────────▲───────────────────────────┬──────────────────┘
-                │                           │
-┌───────────────┴──────────┐   ┌────────────▼─────────────────┐
-│ services/                │   │ data/                        │
-│  stats     (calculs purs)│   │  curriculum (plan figé)      │
-│  countdown (temps pur)   │   │  presets    (minuteurs)      │
-│  sound     (audio)       │   │  store      (JSON persistant)│
-└───────────────▲──────────┘   └────────────┬─────────────────┘
-                │                           │
-            ┌───┴───────────────────────────▼──┐
-            │ models.py (dataclasses immuables)│
-            └──────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│ ui/            widgets CustomTkinter (aucune décision métier)  │
+│  sidebar  header  day_view  block_card  task_row               │
+│  timer_panel  chart  dialogs  widgets (helpers d'interaction)  │
+└──────────────▲────────────────────────────┬───────────────────┘
+               │ callbacks                  │ lecture
+┌──────────────┴────────────────────────────▼───────────────────┐
+│ app.py       orchestration : jour courant, plan, progression   │
+└──────▲────────────────────┬───────────────────────┬────────────┘
+       │                    │                       │
+┌──────┴───────────┐ ┌──────▼──────────┐ ┌──────────▼──────────┐
+│ services/        │ │ data/           │ │ data/               │
+│  stats  (purs)   │ │  plan_store     │ │  store              │
+│  countdown (pur) │ │  curriculum     │ │  (progression)      │
+│  sound           │ │  presets        │ │  jsonfile (E/S)     │
+└──────▲───────────┘ └──────┬──────────┘ └──────────┬──────────┘
+       │                    │                       │
+   ┌───┴────────────────────▼───────────────────────▼──┐
+   │ models.py (dataclasses immuables)                 │
+   └───────────────────────────────────────────────────┘
 ```
 
 Règles de dépendance :
 
 - `models.py` ne dépend de rien (sauf `__future__`).
-- `services/stats.py` ne connaît ni Tk ni CustomTkinter : il manipule
-  `models.DayPlan` et un ensemble d'identifiants terminés.
+- `services/stats.py` et `services/countdown.py` ignorent totalement Tk : ils
+  manipulent des `models.*` et des nombres, donc se testent sans écran.
 - `ui/` ne décide jamais de l'état : il affiche et remonte des callbacks.
-- `theme.py` importe les seuils de `services.stats` (unique dépendance « UI → service »).
-- `app.py` est le seul à connaître `store + curriculum + vues` simultanément.
+- `theme.py` importe les seuils de `services.stats` (unique dépendance « UI → service »),
+  et `data/curriculum.py` importe `DEFAULT_DOMAIN_COLORS` de `theme` pour la graine.
+- `app.py` est le seul à connaître `plan + progression + vues` simultanément.
+
+## Deux fichiers d'état, deux responsabilités
+
+| Fichier | Classe | Contenu | Sémantique |
+|---|---|---|---|
+| `neuro_plan.json` | `data/plan_store.PlanStore` | domaines, blocs, tâches | **structure** (modifiable) |
+| `neuro_progress.json` | `data/store.ProgressStore` | identifiants cochés, sessions | **avancement** (jetable) |
+
+Cette séparation permet de régénérer entièrement un planning (LLM, import) sans
+perdre les statistiques, et de remettre la progression à zéro sans toucher au plan.
+Les deux passent par `data/jsonfile.py` (écriture atomique, quarantaine).
+
+La progression est filtrée au chargement par les identifiants connus du plan :
+supprimer une tâche ne laisse donc jamais de coche orpheline réutilisable.
 
 ## Flux de données
 
+### Cocher une tâche
+
 ```text
-clic sur une tâche
-  └─ TaskRow._commit()            affiche immédiatement l'état
+clic sur une ligne
+  └─ TaskRow._commit()                  affiche immédiatement l'état
       └─ NeuroPlanner._on_task_toggle(task, done)
           ├─ ProgressStore.set_done(tid, done)   → écriture atomique du JSON
           ├─ DayView.sync(completed)             → réaligne toutes les cases
@@ -53,81 +70,94 @@ clic sur une tâche
                └─ DayView.set_progress(...)      → barre du jour
 ```
 
-Le JSON est la source de vérité : `store.completed` est relu par toutes les vues,
-ce qui rend un `reset` ou un redémarrage trivialement cohérent.
+### Éditer le plan (domaine ou tâche)
 
-## Identifiants de tâches
-
-Chaque tâche reçoit `<jour>-<bloc>-<tâche>`, par exemple `mer-2-1`
-(Mercredi, 3ᵉ bloc, 2ᵉ tâche). Ces identifiants sont la clé du fichier de
-progression : **modifier l'ordre des tâches invalide les coches existantes**
-(elles sont alors ignorées au chargement, sans erreur).
-
-## Recettes
-
-### Ajouter ou modifier une tâche
-
-`neuroplanner/data/curriculum.py` → fonction `_day(...)` du jour concerné :
-
-```python
-"mer": _day(
-    "Concurrence : async, backpressure, annulation",
-    "Refactor d'un pipeline asynchrone",
-    ...
-),
+```text
+bouton « Domaines… » / « + » / « ✎ »
+  └─ NeuroPlanner.manage_domains() / add_task() / edit_task()
+      ├─ DomainDialog(self, plan).run()      dialogue modal (grab_set + wait_window)
+      │    └─ plan.add_domain() / delete_domain() / rename_domain() / add_task()…
+      │         └─ PlanStore.save()          écriture atomique de neuro_plan.json
+      └─ si dialog.changed: NeuroPlanner.on_plan_changed()
+           ├─ ProgressStore.prune(plan.task_ids())   → purge des coches orphelines
+           ├─ DayView.show(day, completed, colors)   → reconstruction du jour
+           └─ refresh_aggregates()                   → graphique, en-têtes, nav
 ```
 
-Les 7 arguments sont : dev (cours), dev (lab), IA (cours), IA (lab),
-projet SilenceLess, projet LocalArabi_RAG, arabe. Pour ajouter une tâche,
-éditez la liste du bloc voulu dans `_day` :
+## Format du plan (cible d'un générateur)
 
-```python
-Block("09:00", "10:15", "IA & World Models", "Concepts & intuition",
-      tasks=(
-          Task(ia_core, "IA & World Models", 45),
-          Task(ia_lab, "IA & World Models", 30),
-      )),
+```json
+{
+  "version": 1,
+  "updated_at": "2026-11-14T23:41:00",
+  "domains": [{ "name": "Dev & Archi", "color": "#7C9CFF" }],
+  "days": {
+    "lun": [
+      {
+        "start": "07:30",
+        "end": "08:45",
+        "title": "Dev & Archi",
+        "intent": "Encodage profond",
+        "tasks": [
+          { "id": "lun-0-0", "label": "Architecture hexagonale…", "domain": "Dev & Archi", "minutes": 45 }
+        ]
+      }
+    ]
+  }
+}
 ```
 
-Convention : garder **4 blocs** et **300 minutes** par jour ; les tests
-`tests/test_curriculum.py` le vérifient.
+Règles de validation appliquées au chargement (`PlanStore._load`) :
 
-### Ajouter un pilier
+- seuls les jours `lun…sam` sont retenus, dans cet ordre ;
+- un domaine sans nom, dupliqué ou de couleur invalide est écarté (ou recoloré) ;
+- une tâche sans `id` unique, sans intitulé, sans domaine, ou avec une durée hors
+  `1…240` est ignorée ;
+- un `domain` inconnu rencontré dans une tâche est **enregistré** automatiquement
+  (aucune donnée perdue) ;
+- les blocs gardent leur position : `bid` vaut `<jour>-<index>`.
 
-1. `curriculum.py` : utiliser le nouveau libellé comme `domain` d'une tâche.
-2. `theme.py` : ajouter sa couleur dans `DOMAIN_COLORS` (et `DOMAIN_SHORT` pour
-   le libellé du graphique).
-3. `curriculum.DOMAINS` : ajouter le pilier dans l'ordre d'affichage souhaité.
+**Identifiants stables.** Les tâches issues de la graine utilisent la convention
+positionnelle historique `<jour>-<bloc>-<tâche>` (compatibilité avec les fichier de
+progression existants). Toute tâche créée ensuite reçoit un identifiant
+`t<8 hex>` qui ne dépend plus de sa position : ajouter ou supprimer des tâches ne
+décale jamais les coches existantes.
 
-### Ajouter un minuteur
+## Brancher un LLM (feuille de route)
 
-`neuroplanner/data/presets.py` :
+L'app ne contient volontairement **aucun appel réseau** pour l'instant. Le point
+d'extension est déjà en place : produire des `models.Block` par jour, puis appeler
+`PlanStore.replace_week()`.
 
 ```python
-TimerPreset(
-    key="recall",
-    label="Rappel 20",
-    seconds=20 * 60,
-    caption="Rappel 20 min · restitution d'un chapitre entier.",
-    finished_hint="Rappel terminé — compare avec la source.",
-),
+from neuroplanner.models import Block, Task
+
+week = {
+    "lun": [Block("07:30", "08:45", "Chapitre 1", "Encodage", (
+        Task("Limites et continuité", "Mathématiques", 45),
+        Task("Exercices 1–5", "Mathématiques", 30),
+    ))],
+    # … mardi → samedi
+}
+plan.replace_week(week)   # domaines inconnus enregistrés, ids générés, fichier écrit
 ```
 
-L'interface et le `SegmentedButton` se mettent à jour automatiquement.
+Implémentation suggérée, par ordre de valeur :
 
-### Changer les couleurs
-
-`theme.py` : éditer `DARK` (instance de `Palette`). Toutes les vues lisent
-`PALETTE.*` ; aucune couleur n'est codée en dur dans `ui/`. Les seuils
-(50 % / 80 %) sont dans `services/stats.py`.
-
-### Ajouter une vue ou un panneau
-
-1. Créer `neuroplanner/ui/mon_panneau.py` avec un `ctk.CTkFrame` exposant des
-   méthodes `set_*` (pas d'accès au store).
-2. L'instancier dans `NeuroPlanner._build_layout()` et l'appeler depuis
-   `refresh_aggregates()`.
-3. Ajouter un test `gui` dans `tests/test_ui_smoke.py`.
+1. `services/generation.py` : un `Protocol` `PlanGenerator` exposant
+   `generate(chapters, *, minutes_per_day) -> dict[str, Iterable[Block]]`, plus un
+   `parse_chapters(text)` tolérant (liste à puces, titres, JSON) pour transformer une
+   table des matières collée dans l'UI.
+2. Fournisseurs interchangeables : **Ollama** en local (`http://localhost:11434`,
+   modèle `llama3.2`/`qwen2.5`, gratuit et hors ligne), ou une API à palier gratuit
+   (Groq, Gemini) via une clé stockée dans une variable d'environnement — jamais
+   dans le dépôt.
+3. UI : un bouton « Importer un programme » dans le dialogue des domaines, avec
+   **aperçu avant application** (le JSON proposé est affiché, puis validé par
+   `replace_week`), et un retour arrière via une copie de `neuro_plan.json`.
+4. Garde-fous : valider la sortie du modèle comme le fait `_load` (durées, domaines,
+   nombre de blocs), plafonner à 4 blocs et 300 min par jour, et refuser toute
+   réponse non conforme — ne jamais écrire un plan invalide.
 
 ## Détails d'implémentation notables
 
@@ -135,32 +165,45 @@ L'interface et le `SegmentedButton` se mettent à jour automatiquement.
   `bind` sur la racine ne suffit pas. `ui/widgets.py` parcourt l'arbre
   (`bind_tree`, `make_interactive`) et diffère la sortie de survol pour éviter
   le clignotement entre enfants.
-- **Case à cocher** : elle est exclue des binds de la ligne (`skip=self.check`)
-  pour ne pas basculer deux fois.
+- **Case à cocher et crayon** : exclus des binds de la ligne (`skip=(...)`) pour
+  ne pas basculer deux fois la tâche quand on clique dessus.
 - **Minuteur** : `services/countdown.py` s'appuie sur `time.monotonic` et une
   horloge injectable ; `ui/timer_panel.py` ne fait que planifier `after(100)`.
   La fin est signalée une seule fois par `tick() -> True`.
 - **DPI/échelle** : CustomTkinter applique un facteur lié au DPI Windows
   (`_get_window_scaling()`), différent de celui de Tk. `app._apply_window_geometry()`
   fixe donc la taille **physique** de la fenêtre via `tk.Tk.geometry` tout en
-  gardant des dimensions logiques cohérentes, pour qu'elle tienne toujours à
-  l'écran (testé sur 1280×720 à 150 %).
-- **Panneaux défilants** : la colonne de droite est un `CTkScrollableFrame` :
-  sur un écran bas, minuteurs et graphique restent accessibles au lieu d'être
-  coupés.
+  gardant des dimensions logiques cohérentes. Les dialogues font de même dans
+  `ModalDialog._center()`.
+- **Panneaux défilants** : la colonne de droite est un `CTkScrollableFrame` et la
+  liste des domaines aussi : sur un écran bas, rien n'est coupé.
+- **Domaines vides** : `stats.domain_progress(..., order=plan.domain_names)`
+  renvoie **tous** les domaines de l'ordre fourni, même sans tâche ; le graphique
+  les affiche en gris avec la mention « vide » plutôt qu'en rouge (0 % serait
+  trompeur).
+- **Un seul domaine minimum** : `delete_domain` refuse de supprimer le dernier,
+  car une tâche doit toujours référencer un pilier existant.
 
 ## Tests
 
 | Fichier | Portée | Écran requis |
 |---|---|---|
-| `test_curriculum.py` | 6 jours, 4 blocs, 5 h, 5 piliers, identifiants | non |
-| `test_stats.py` | agrégations, bornes, seuils | non |
+| `test_curriculum.py` | graine : 6 jours, 4 blocs, 5 h, piliers, identifiants | non |
+| `test_plan_store.py` | domaines, tâches, validation, persistance, `replace_week` | non |
+| `test_stats.py` | agrégations, bornes, domaines vides | non |
 | `test_countdown.py` | pause/reprise/fin, horloge simulée | non |
-| `test_store.py` | écriture atomique, quarantaine, migration | non |
+| `test_store.py` | écriture atomique, quarantaine, `prune`/`forget` | non |
 | `test_core.py` | formats, chemins, palette | non |
-| `test_ui_smoke.py` | vraie fenêtre : coche, navigation, reset, minuteur, reprise | **oui** |
+| `test_ui_smoke.py` | fenêtre réelle : coche, navigation, reset, minuteur, reprise | **oui** |
+| `test_ui_editing.py` | dialogues domaines/tâches et propagation aux vues | **oui** |
 
 ```powershell
 python -m pytest                  # tout
 python -m pytest -m "not gui"     # sans écran (utilisé par la CI)
 ```
+
+**Piège des tests modaux** : ne jamais déclencher un bouton qui ouvre un vrai
+`run()` (il appellerait `wait_window()` et bloquerait la suite). Soit on instancie
+le dialogue et on appelle ses méthodes directement, soit on remplace
+`neuroplanner.app.TaskDialog` / `DomainDialog` par un stub (voir
+`test_ui_editing.py`).

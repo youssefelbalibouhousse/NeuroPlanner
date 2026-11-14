@@ -1,23 +1,29 @@
-"""Vue défilante d'une journée : en-tête + 4 blocs + barre d'avancement."""
+"""Vue défilante d'une journée : en-tête + blocs modifiables + barre d'avancement."""
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 
 import customtkinter as ctk
 
 from neuroplanner.formatting import fmt_duration, fmt_percent
-from neuroplanner.models import DayPlan
+from neuroplanner.models import DayPlan, TaskNode
 from neuroplanner.services.stats import Progress
 from neuroplanner.theme import PALETTE, color_for, font
-from neuroplanner.ui.block_card import BlockCard
-from neuroplanner.ui.task_row import ToggleHandler
+from neuroplanner.ui.block_card import AddTaskHandler, BlockCard
+from neuroplanner.ui.task_row import EditHandler, ToggleHandler
 
 
 class DayView(ctk.CTkScrollableFrame):
-    """Contenu du jour sélectionné ; se reconstruit à chaque changement de jour."""
+    """Contenu du jour sélectionné ; se reconstruit quand le plan change."""
 
-    def __init__(self, master: ctk.CTkBaseClass, on_toggle: ToggleHandler) -> None:
+    def __init__(
+        self,
+        master: ctk.CTkBaseClass,
+        on_toggle: ToggleHandler,
+        on_edit_task: EditHandler | None = None,
+        on_add_task: AddTaskHandler | None = None,
+    ) -> None:
         super().__init__(
             master,
             fg_color="transparent",
@@ -26,6 +32,8 @@ class DayView(ctk.CTkScrollableFrame):
             scrollbar_button_hover_color=PALETTE.dim,
         )
         self._on_toggle = on_toggle
+        self._on_edit_task = on_edit_task
+        self._on_add_task = on_add_task
         self.day: DayPlan | None = None
         self.blocks: list[BlockCard] = []
 
@@ -34,7 +42,12 @@ class DayView(ctk.CTkScrollableFrame):
         self._stat_label: ctk.CTkLabel | None = None
 
     # -- construction ------------------------------------------------------ #
-    def show(self, day: DayPlan, completed: Collection[str]) -> None:
+    def show(
+        self,
+        day: DayPlan,
+        completed: Collection[str],
+        colors: Mapping[str, str],
+    ) -> None:
         """Reconstruit la vue pour ``day``."""
         self.day = day
         for child in self.winfo_children():
@@ -43,9 +56,19 @@ class DayView(ctk.CTkScrollableFrame):
         self.grid_columnconfigure(0, weight=1)
 
         self._build_header(day)
-        for index, block in enumerate(day.blocks, start=3):
-            card = BlockCard(self, block, completed, self._on_toggle)
-            card.grid(row=index, column=0, sticky="ew", pady=(0, 12))
+        for index, block in enumerate(day.blocks, start=0):
+            card = BlockCard(
+                self,
+                block,
+                day_key=day.key,
+                block_index=index,
+                completed=completed,
+                colors=colors,
+                on_toggle=self._on_toggle,
+                on_edit_task=self._on_edit_task,
+                on_add_task=self._on_add_task,
+            )
+            card.grid(row=3 + index, column=0, sticky="ew", pady=(0, 12))
             self.blocks.append(card)
 
         ctk.CTkFrame(self, height=6, fg_color="transparent").grid(
@@ -98,13 +121,21 @@ class DayView(ctk.CTkScrollableFrame):
     # -- synchronisation --------------------------------------------------- #
     @property
     def percent_text(self) -> str:
-        """Pourcentage affiché pour le jour courant (utile aux tests et au diagnostic)."""
+        """Pourcentage affiché pour le jour courant (tests, diagnostic)."""
         return self._percent_label.cget("text") if self._percent_label else ""
 
     def sync(self, completed: Collection[str]) -> None:
         """Répercute un état persisté sur toutes les cases (reset, rechargement)."""
         for card in self.blocks:
             card.sync(completed)
+
+    def update_task(self, task: TaskNode, color: str) -> None:
+        """Met à jour une ligne après édition, sans reconstruire la journée."""
+        for card in self.blocks:
+            for row in card.rows:
+                if row.task.tid == task.tid:
+                    row.apply(task, color)
+                    return
 
     def set_progress(self, progress: Progress) -> None:
         """Met à jour la barre et les libellés d'en-tête."""

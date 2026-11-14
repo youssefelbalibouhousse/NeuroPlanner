@@ -54,14 +54,29 @@ PALETTE: Palette = DARK
 FONT_FAMILY = "Segoe UI"
 MONO_FAMILY = "Consolas"
 
-#: Couleur d'accent par pilier d'apprentissage (source : curriculum).
-DOMAIN_COLORS: dict[str, str] = {
+#: Couleurs d'accent par défaut, pilier par pilier (seed du plan).
+DEFAULT_DOMAIN_COLORS: dict[str, str] = {
     "Dev & Archi": "#7C9CFF",
     "IA & World Models": "#B58CFF",
     "Projets": "#3FD0BE",
     "Arabe MSA": "#F2C14E",
     "Révision Active": "#F27AA8",
 }
+
+#: Palette de couleurs proposée aux domaines créés par l'utilisateur.
+DOMAIN_PALETTE: tuple[str, ...] = (
+    "#7C9CFF",
+    "#B58CFF",
+    "#3FD0BE",
+    "#F2C14E",
+    "#F27AA8",
+    "#6FD3F2",
+    "#F2845C",
+    "#9BE36B",
+    "#D9A7FF",
+    "#FF9DBB",
+)
+
 FALLBACK_DOMAIN_COLOR = "#8B94A7"
 
 #: Libellés courts pour le graphique (la place est limitée).
@@ -82,7 +97,15 @@ def mix(color_a: str, color_b: str, ratio: float) -> str:
 
 
 def domain_color(domain: str) -> str:
-    return DOMAIN_COLORS.get(domain, FALLBACK_DOMAIN_COLOR)
+    """Couleur par défaut d'un pilier connu (le plan fait foi à l'exécution)."""
+    return DEFAULT_DOMAIN_COLORS.get(domain, FALLBACK_DOMAIN_COLOR)
+
+
+def short_label(domain: str) -> str:
+    """Libellé compact pour le graphique."""
+    if domain in DOMAIN_SHORT:
+        return DOMAIN_SHORT[domain]
+    return domain if len(domain) <= 14 else f"{domain[:13]}…"
 
 
 def color_for(percent: float) -> str:

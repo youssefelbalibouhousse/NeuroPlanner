@@ -84,6 +84,7 @@ class Sidebar(ctk.CTkFrame):
         master: ctk.CTkBaseClass,
         on_select: Callable[[str], None],
         on_reset: Callable[[], None],
+        on_manage_domains: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(master, fg_color=PALETTE.sidebar, corner_radius=0)
         self.grid_columnconfigure(0, weight=1)
@@ -94,7 +95,7 @@ class Sidebar(ctk.CTkFrame):
         self._build_brand()
         self._build_nav(on_select)
         self._build_summary()
-        self._build_reset(on_reset)
+        self._build_actions(on_reset, on_manage_domains)
 
     # -- construction ------------------------------------------------------ #
     def _build_brand(self) -> None:
@@ -160,7 +161,28 @@ class Sidebar(ctk.CTkFrame):
         )
         self.stat_label.grid(row=3, column=0, sticky="w", padx=14, pady=(6, 12))
 
-    def _build_reset(self, on_reset: Callable[[], None]) -> None:
+    def _build_actions(
+        self,
+        on_reset: Callable[[], None],
+        on_manage_domains: Callable[[], None] | None,
+    ) -> None:
+        self.domains_button = ctk.CTkButton(
+            self,
+            text="Domaines…",
+            height=38,
+            corner_radius=11,
+            fg_color=PALETTE.card,
+            border_width=1,
+            border_color=PALETTE.border,
+            hover_color=PALETTE.raised,
+            text_color=PALETTE.text,
+            font=font(11, "bold"),
+            command=on_manage_domains,
+        )
+        self.domains_button.grid(row=5, column=0, sticky="ew", padx=14, pady=(0, 8))
+        if on_manage_domains is None:
+            self.domains_button.grid_remove()
+
         ctk.CTkButton(
             self,
             text="Réinitialiser la semaine",
@@ -173,11 +195,11 @@ class Sidebar(ctk.CTkFrame):
             text_color=PALETTE.muted,
             font=font(11),
             command=on_reset,
-        ).grid(row=5, column=0, sticky="ew", padx=14, pady=(0, 12))
+        ).grid(row=6, column=0, sticky="ew", padx=14, pady=(0, 12))
 
         ctk.CTkLabel(
             self, text="Ctrl + 1…6 : changer de jour", font=font(9), text_color=PALETTE.dim
-        ).grid(row=6, column=0, pady=(0, 16))
+        ).grid(row=7, column=0, pady=(0, 16))
 
     # -- mise à jour ------------------------------------------------------- #
     def update_day(self, day_key: str, progress: Progress, *, selected: bool) -> None:

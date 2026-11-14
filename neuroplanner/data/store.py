@@ -1,14 +1,18 @@
-"""Persistance locale de la progression (JSON, écriture atomique)."""
+"""Persistance locale de la progression (JSON, écriture atomique).
+
+La progression est distincte du plan : elle ne contient que les identifiants de
+tâches cochées et les statistiques d'assiduité. Si le plan change (domaine ou
+tâche supprimés), les identifiants devenus inconnus sont ignorés au chargement.
+"""
 
 from __future__ import annotations
 
 import contextlib
-import json
-import os
+from collections.abc import Collection
 from datetime import datetime
 from pathlib import Path
 
-from neuroplanner.data.curriculum import TASKS_BY_ID
+from neuroplanner.data.jsonfile import read_json, write_json_atomic
 
 #: Une session de ``Focus 45`` compte comme du temps de focus.
 FOCUS_SESSION_SECONDS = 45 * 60
@@ -23,8 +27,14 @@ class ProgressStore:
 
     VERSION = 1
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(
+        self,
+        path: Path | str,
+        *,
+        valid_ids: Collection[str] | None = None,
+    ) -> None:
         self.path = Path(path)
+        self._valid_ids = set(valid_ids) if valid_ids is not None else None
         self.completed: set[str] = set()
         self.sessions = 0
         self.focus_seconds = 0
@@ -38,47 +48,42 @@ class ProgressStore:
 
     def load(self) -> None:
         """Recharge l'état ; un fichier illisible est mis en quarantaine."""
-        try:
-            raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return
-        except (OSError, json.JSONDecodeError):
-            self._quarantine()
-            return
-        if not isinstance(raw, dict):
+        raw = read_json(self.path)
+        if raw is None:
+            if self.path.exists():
+                self._quarantine()
             return
 
         completed = raw.get("completed", {})
+        candidates: set[str]
         if isinstance(completed, dict):
-            self.completed = {
-                tid for tid, done in completed.items() if done and tid in TASKS_BY_ID
-            }
+            candidates = {tid for tid, done in completed.items() if done and isinstance(tid, str)}
         elif isinstance(completed, list):
-            self.completed = {
-                tid for tid in completed if isinstance(tid, str) and tid in TASKS_BY_ID
-            }
+            candidates = {tid for tid in completed if isinstance(tid, str)}
+        else:
+            candidates = set()
+        self.completed = self._keep_known(candidates)
 
         stats = raw.get("stats") if isinstance(raw.get("stats"), dict) else {}
         self.sessions = max(0, _as_int(stats.get("sessions")))
         self.focus_seconds = max(0, _as_int(stats.get("focus_seconds")))
 
+    def _keep_known(self, ids: set[str]) -> set[str]:
+        if self._valid_ids is None:
+            return ids
+        return {tid for tid in ids if tid in self._valid_ids}
+
     # -- écriture --------------------------------------------------------- #
     def save(self) -> None:
-        payload = {
-            "version": self.VERSION,
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
-            "completed": {tid: True for tid in sorted(self.completed)},
-            "stats": {"sessions": self.sessions, "focus_seconds": self.focus_seconds},
-        }
-        tmp = self.path.with_suffix(".tmp")
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            tmp.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-            os.replace(tmp, self.path)
-        except OSError:
-            tmp.unlink(missing_ok=True)
+        write_json_atomic(
+            self.path,
+            {
+                "version": self.VERSION,
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+                "completed": {tid: True for tid in sorted(self.completed)},
+                "stats": {"sessions": self.sessions, "focus_seconds": self.focus_seconds},
+            },
+        )
 
     def _quarantine(self) -> None:
         """Écarte un fichier illisible plutôt que de le perdre silencieusement."""
@@ -109,6 +114,25 @@ class ProgressStore:
         if seconds >= FOCUS_SESSION_SECONDS:
             self.focus_seconds += seconds
         self.save()
+
+    def forget(self, tids: Collection[str]) -> int:
+        """Oublie les tâches supprimées du plan ; renvoie le nombre oublié."""
+        removed = self.completed & set(tids)
+        if not removed:
+            return 0
+        self.completed -= removed
+        self.save()
+        return len(removed)
+
+    def prune(self, valid_ids: Collection[str]) -> int:
+        """Élimine les identifiants qui ne font plus partie du plan."""
+        self._valid_ids = set(valid_ids)
+        orphans = self.completed - self._valid_ids
+        if not orphans:
+            return 0
+        self.completed -= orphans
+        self.save()
+        return len(orphans)
 
 
 def _as_int(value: object) -> int:

@@ -26,10 +26,14 @@ htmlcov/
 coverage.xml
 
 # --- Données locales de l'application ---
-# La progression est un état personnel : jamais versionnée.
+# La progression et le planning sont des états personnels : jamais versionnés.
 neuro_progress.json
 neuro_progress.tmp
 neuro_progress.corrupt.json
+neuro_plan.json
+neuro_plan.tmp
+neuro_plan.corrupt.json
+*.tmp
 *.corrupt.json
 
 # --- Éditeurs / OS ---

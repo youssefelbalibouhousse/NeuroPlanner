@@ -14,10 +14,10 @@ from matplotlib.figure import Figure  # noqa: E402
 
 from neuroplanner.services.stats import DomainProgress  # noqa: E402
 from neuroplanner.theme import (  # noqa: E402
-    DOMAIN_SHORT,
     PALETTE,
     color_for,
     font,
+    short_label,
 )
 
 #: Largeur d'axe réservée à droite pour les étiquettes de pourcentage.
@@ -65,6 +65,7 @@ class DomainChart(ctk.CTkFrame):
             (PALETTE.red, "< 50 % à refocaliser"),
             (PALETTE.orange, "50–79 % en cours"),
             (PALETTE.green, "≥ 80 % maîtrisé"),
+            (PALETTE.dim, "aucune tâche"),
         )
         for index, (color, label) in enumerate(entries):
             ctk.CTkLabel(legend, text="●", text_color=color, font=font(9)).grid(
@@ -75,15 +76,17 @@ class DomainChart(ctk.CTkFrame):
             )
 
     def refresh(self, data: Sequence[DomainProgress]) -> None:
-        """Redessine les barres à partir des progressions par pilier."""
+        """Redessine les barres ; un pilier sans tâche est affiché en gris « vide »."""
         axes = self.axes
         axes.clear()
         axes.set_facecolor(PALETTE.card)
 
-        labels = [DOMAIN_SHORT.get(item.domain, item.domain) for item in data]
+        labels = [short_label(item.domain) for item in data]
         values = [item.percent for item in data]
+        filled = [item.progress.total > 0 for item in data]
         positions = list(range(len(data)))[::-1]
-        colors = [color_for(value) for value in values]
+        colors = [color_for(value) if has_value else PALETTE.dim
+                  for value, has_value in zip(values, filled, strict=True)]
 
         axes.barh(positions, values, height=0.56, color=colors, edgecolor="none", zorder=3)
         axes.set_yticks(positions)
@@ -98,15 +101,15 @@ class DomainChart(ctk.CTkFrame):
         for spine in axes.spines.values():
             spine.set_visible(False)
 
-        for position, value in zip(positions, values, strict=True):
+        for position, value, has_value in zip(positions, values, filled, strict=True):
             axes.text(
                 min(value + 2.5, 100 + VALUE_HEADROOM - 10),
                 position,
-                f"{value:.0f} %",
+                f"{value:.0f} %" if has_value else "vide",
                 va="center",
                 ha="left",
                 fontsize=8,
-                color=color_for(value),
+                color=color_for(value) if has_value else PALETTE.dim,
                 fontweight="bold",
             )
 

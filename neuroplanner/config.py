@@ -8,11 +8,13 @@ from pathlib import Path
 from typing import Final
 
 APP_NAME: Final[str] = "NeuroPlanner"
-APP_VERSION: Final[str] = "1.0.0"
+APP_VERSION: Final[str] = "1.1.0"
 APP_TAGLINE: Final[str] = "5 h / jour · neuroplasticité"
 
 DATA_FILENAME: Final[str] = "neuro_progress.json"
 DATA_ENV_VAR: Final[str] = "NEUROPLANNER_DATA"
+PLAN_FILENAME: Final[str] = "neuro_plan.json"
+PLAN_ENV_VAR: Final[str] = "NEUROPLANNER_PLAN"
 
 #: Clé courte -> libellé affiché. L'ordre définit la navigation.
 DAYS: Final[tuple[tuple[str, str], ...]] = (
@@ -58,6 +60,24 @@ def resolve_data_file(explicit: str | os.PathLike[str] | None = None) -> Path:
     if from_env:
         return Path(from_env).expanduser()
     return user_data_dir() / DATA_FILENAME
+
+
+def resolve_plan_file(
+    explicit: str | os.PathLike[str] | None = None,
+    data_file: Path | None = None,
+) -> Path:
+    """Emplacement du fichier de plan (domaines, blocs, tâches).
+
+    Priorité : argument explicite (``--plan-file``), variable
+    ``NEUROPLANNER_PLAN``, puis même dossier que la progression.
+    """
+    if explicit:
+        return Path(explicit).expanduser()
+    from_env = os.environ.get(PLAN_ENV_VAR)
+    if from_env:
+        return Path(from_env).expanduser()
+    base = data_file.parent if data_file is not None else user_data_dir()
+    return base / PLAN_FILENAME
 
 
 def asset_path(name: str) -> Path:

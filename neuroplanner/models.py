@@ -79,3 +79,11 @@ class TimerPreset:
     seconds: int
     caption: str
     finished_hint: str
+
+
+@dataclass(frozen=True, slots=True)
+class Domain:
+    """Pilier d'apprentissage : nom unique (insensible à la casse) et couleur."""
+
+    name: str
+    color: str
