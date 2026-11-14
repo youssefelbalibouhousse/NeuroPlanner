@@ -42,7 +42,7 @@ d'encodage/consolidation/récupération, graphique de refocalisation par pilier 
 Python **3.10+** requis.
 
 ```powershell
-git clone https://github.com/<votre-compte>/NeuroPlanner.git
+git clone https://github.com/youssefelbalibouhousse/NeuroPlanner.git
 cd NeuroPlanner
 
 python -m venv .venv

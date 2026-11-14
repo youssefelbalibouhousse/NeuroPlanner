@@ -44,8 +44,9 @@ neuroplanner = "neuroplanner.__main__:main"
 neuroplanner-gui = "neuroplanner.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/youss/NeuroPlanner"
-Issues = "https://github.com/youss/NeuroPlanner/issues"
+Homepage = "https://github.com/youssefelbalibouhousse/NeuroPlanner"
+Repository = "https://github.com/youssefelbalibouhousse/NeuroPlanner"
+Issues = "https://github.com/youssefelbalibouhousse/NeuroPlanner/issues"
 
 [tool.setuptools]
 packages = ["neuroplanner", "neuroplanner.data", "neuroplanner.services", "neuroplanner.ui"]
