@@ -9,7 +9,7 @@ base et une clé différentes. Ajouter un fournisseur = ajouter une entrée dans
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -60,12 +60,9 @@ PROVIDERS: tuple[Provider, ...] = (
         kind="openai",
         base_url="https://api.groq.com/openai/v1",
         env_var="GROQ_API_KEY",
-        models=(
-            "llama-3.3-70b-versatile",
-            "llama-3.1-8b-instant",
-            "openai/gpt-oss-120b",
-            "qwen/qwen3-32b",
-        ),
+        # Repli seulement : la liste réelle est lue via /models quand une clé
+        # est présente (Groq retire régulièrement des modèles).
+        models=("openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"),
         requires_key=True,
         docs_url="https://console.groq.com/keys",
     ),
@@ -90,6 +87,57 @@ PROVIDERS: tuple[Provider, ...] = (
         docs_url="https://console.mistral.ai/api-keys",
     ),
 )
+
+#: Fragments de noms de modèles qui ne produisent pas de texte conversationnel :
+#: les proposer dans le menu garantirait un échec à la génération.
+NON_CHAT_PATTERNS: tuple[str, ...] = (
+    "whisper",
+    "orpheus",
+    "prompt-guard",
+    "safeguard",
+    "embed",
+    "tts",
+    "rerank",
+    "moderation",
+)
+
+#: Fragments d'erreur signalant un modèle absent ou inaccessible.
+MISSING_MODEL_PATTERNS: tuple[str, ...] = (
+    "model_not_found",
+    "does not exist",
+    "do not have access",
+    "not found",
+    "unknown model",
+    "invalid model",
+)
+
+
+def chat_models(names: Iterable[str]) -> list[str]:
+    """Ne garde que les modèles capables de produire du texte de chat."""
+    kept = [
+        name
+        for name in names
+        if not any(pattern in name.casefold() for pattern in NON_CHAT_PATTERNS)
+    ]
+    return sorted(dict.fromkeys(kept))
+
+
+def is_model_missing(message: str) -> bool:
+    lowered = message.casefold()
+    return any(pattern in lowered for pattern in MISSING_MODEL_PATTERNS)
+
+
+def preferred_model(provider: Provider, available: Sequence[str]) -> str | None:
+    """Meilleur choix parmi ``available`` : la liste curatée du registre d'abord.
+
+    Évite de tomber sur un modèle spécialisé (arabe, code, garde-fou) simplement
+    parce qu'il arrive en tête de l'ordre alphabétique de l'API.
+    """
+    for name in provider.models:
+        if name in available:
+            return name
+    return available[0] if available else None
+
 
 _BY_KEY = {provider.key: provider for provider in PROVIDERS}
 #: Provider hébergé de secours quand l'utilisateur saisit une clé inconnue.
@@ -198,13 +246,16 @@ class OpenAiCompatClient:
         self.settings = settings
         self.label = label or get_provider(settings.provider).label
         self._transport = transport or self._default_transport
+        #: Modèle réellement utilisé si le modèle demandé était indisponible.
+        self.used_model: str | None = None
 
     # -- API --------------------------------------------------------------- #
     def models(self, *, strict: bool = False) -> list[str]:
-        """Modèles disponibles pour cette clé.
+        """Modèles de chat disponibles pour cette clé.
 
-        Avec ``strict``, une erreur de clé ou de réseau remonte au lieu de
-        renvoyer une liste vide (utilisé par ``--check-llm``).
+        Les modèles qui ne produisent pas de texte (transcription, synthèse
+        vocale, garde-fous) sont écartés : les proposer ferait échouer la
+        génération. Avec ``strict``, une erreur de clé ou de réseau remonte.
         """
         try:
             payload = self._transport(f"{self._base}/models", None, self._headers(), 20.0)
@@ -218,12 +269,32 @@ class OpenAiCompatClient:
             for entry in entries
             if isinstance(entry, dict)
         ]
-        return sorted({name for name in names if name})
+        return chat_models(name for name in names if name)
 
     def complete(self, prompt: str) -> str:
         self._require_key()
+        try:
+            return self._complete(prompt, self.settings.model)
+        except LlmError as error:
+            if not is_model_missing(str(error)):
+                raise
+            # Un fournisseur peut retirer un modèle du jour au lendemain :
+            # on bascule une fois sur un modèle réellement accessible.
+            fallback = self._fallback_model()
+            if fallback is None:
+                available = self.models()
+                if available:
+                    raise LlmError(
+                        f"{error}\nModèles disponibles avec cette clé : "
+                        f"{', '.join(available[:6])}."
+                    ) from None
+                raise
+            self.used_model = fallback
+            return self._complete(prompt, fallback)
+
+    def _complete(self, prompt: str, model: str) -> str:
         payload = {
-            "model": self.settings.model,
+            "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,
         }
@@ -234,6 +305,11 @@ class OpenAiCompatClient:
         if not text:
             raise LlmError(f"Réponse vide de {self.label} : essaie un autre modèle.")
         return text
+
+    def _fallback_model(self) -> str | None:
+        """Premier modèle de chat accessible, différent de celui demandé."""
+        candidates = [name for name in self.models() if name != self.settings.model]
+        return preferred_model(get_provider(self.settings.provider), candidates)
 
     # -- interne ----------------------------------------------------------- #
     @property

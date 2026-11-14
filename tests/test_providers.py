@@ -10,8 +10,11 @@ from neuroplanner.services.llm import LlmError, LlmSettings
 from neuroplanner.services.providers import (
     PROVIDERS,
     OpenAiCompatClient,
+    chat_models,
     create_client,
     get_provider,
+    is_model_missing,
+    preferred_model,
     provider_from_label,
     provider_labels,
     resolve_settings,
@@ -65,7 +68,7 @@ def test_settings_for_hosted_provider(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     settings = settings_for("groq", api_key="gsk_test")
     assert settings.provider == "groq"
-    assert settings.model == "llama-3.3-70b-versatile"
+    assert settings.model == "openai/gpt-oss-120b"
     assert settings.base_url == "https://api.groq.com/openai/v1"
     assert settings.api_key == "gsk_test"
     assert settings.think is None
@@ -138,7 +141,7 @@ def test_complete_posts_a_chat_completion() -> None:
 
     call = calls[0]
     assert call["url"] == "https://api.groq.com/openai/v1/chat/completions"
-    assert call["payload"]["model"] == "llama-3.3-70b-versatile"
+    assert call["payload"]["model"] == "openai/gpt-oss-120b"
     assert call["payload"]["messages"] == [{"role": "user", "content": "salut"}]
     assert call["headers"]["Authorization"] == "Bearer gsk_secret"
 
@@ -291,3 +294,105 @@ def test_gemini_style_400_is_read_as_a_key_problem(monkeypatch: pytest.MonkeyPat
     client = _http_error_client(monkeypatch, 400, body)
     with pytest.raises(LlmError, match="Clé refusée ou invalide"):
         client.complete("x")
+
+
+# --------------------------------------------------------------------------- #
+# Modèles retirés par le fournisseur (bascule automatique)
+# --------------------------------------------------------------------------- #
+def test_chat_models_drops_audio_and_guard_models() -> None:
+    names = [
+        "llama-3.3-70b-versatile",
+        "whisper-large-v3",
+        "playai-tts",
+        "meta-llama/llama-prompt-guard-2-86m",
+        "openai/gpt-oss-safeguard-20b",
+        "nomic-embed-text",
+    ]
+    assert chat_models(names) == ["llama-3.3-70b-versatile"]
+
+
+def test_models_skips_non_chat_entries_from_the_api() -> None:
+    payload = {"data": [{"id": "whisper-large-v3"}, {"id": "openai/gpt-oss-120b"}]}
+    client = OpenAiCompatClient(settings_for("groq", api_key="k"), transport=fake_transport(payload))
+    assert client.models() == ["openai/gpt-oss-120b"]
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        'Groq a répondu 404 : {"error": {"code": "model_not_found"}}',
+        "The model `x` does not exist or you do not have access to it.",
+        "Unknown model: x",
+    ],
+)
+def test_is_model_missing_detects_retired_models(message: str) -> None:
+    assert is_model_missing(message) is True
+
+
+@pytest.mark.parametrize(
+    "message",
+    ["Clé refusée ou invalide", "Impossible de joindre Groq", "Réponse vide de Groq"],
+)
+def test_is_model_missing_ignores_other_errors(message: str) -> None:
+    assert is_model_missing(message) is False
+
+
+def test_preferred_model_follows_the_curated_order() -> None:
+    provider = get_provider("groq")
+    available = ["allam-2-7b", "openai/gpt-oss-20b", "openai/gpt-oss-120b"]
+    assert preferred_model(provider, available) == "openai/gpt-oss-120b"
+    assert preferred_model(provider, ["allam-2-7b"]) == "allam-2-7b"
+    assert preferred_model(provider, []) is None
+
+
+def test_complete_retries_with_an_available_model() -> None:
+    """Le scénario réel : « llama-3.3-70b-versatile » retiré du compte Groq."""
+    retired = "llama-3.3-70b-versatile"
+    chat_calls: list[str] = []
+
+    def transport(url: str, payload: dict | None, headers: dict, timeout: float) -> dict:
+        if url.endswith("/models"):
+            return {"data": [{"id": retired}, {"id": "openai/gpt-oss-120b"}, {"id": "whisper"}]}
+        model = str((payload or {}).get("model"))
+        chat_calls.append(model)
+        if model == retired:
+            raise LlmError('Groq a répondu 404 : {"error": {"code": "model_not_found"}}')
+        return chat_response('[{"titre": "Suites"}]')
+
+    client = OpenAiCompatClient(
+        settings_for("groq", api_key="gsk_retired", model=retired), transport=transport
+    )
+
+    assert client.complete("x").startswith('[{"titre"')
+    assert chat_calls == [retired, "openai/gpt-oss-120b"]
+    assert client.used_model == "openai/gpt-oss-120b"
+
+
+def test_complete_lists_available_models_when_no_fallback_exists() -> None:
+    retired = "modele-disparu"
+
+    def transport(url: str, payload: dict | None, headers: dict, timeout: float) -> dict:
+        if url.endswith("/models"):
+            return {"data": [{"id": retired}]}
+        raise LlmError("The model `modele-disparu` does not exist")
+
+    client = OpenAiCompatClient(
+        settings_for("groq", api_key="gsk_x", model=retired), transport=transport
+    )
+
+    with pytest.raises(LlmError, match="Modèles disponibles avec cette clé : modele-disparu"):
+        client.complete("x")
+
+
+def test_other_errors_are_not_retried() -> None:
+    chat_calls: list[str] = []
+
+    def transport(url: str, payload: dict | None, headers: dict, timeout: float) -> dict:
+        chat_calls.append(url)
+        raise LlmError("Clé refusée ou invalide pour Groq")
+
+    client = OpenAiCompatClient(settings_for("groq", api_key="gsk_x"), transport=transport)
+    with pytest.raises(LlmError, match="Clé refusée"):
+        client.complete("x")
+    assert len(chat_calls) == 1  # aucun appel à /models, aucune nouvelle tentative
+

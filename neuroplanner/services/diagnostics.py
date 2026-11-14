@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from neuroplanner.services.llm import LlmError, LlmSettings
-from neuroplanner.services.providers import create_client, get_provider
+from neuroplanner.services.providers import Provider, create_client, get_provider, preferred_model
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +22,7 @@ class DiagnosticReport:
     key_state: str
     models: tuple[str, ...] = ()
     error: str = ""
+    warning: str = ""
 
     @property
     def ok(self) -> bool:
@@ -36,6 +37,8 @@ class DiagnosticReport:
             f"  Modèle   : {self.model}",
             f"  Clé      : {self.key_state}",
         ]
+        if self.warning:
+            lines.append(f"  Note     : {self.warning}")
         if self.ok:
             preview = ", ".join(self.models[:6]) or "(aucun modèle listé)"
             suffix = "" if len(self.models) <= 6 else f" … (+{len(self.models) - 6})"
@@ -81,7 +84,30 @@ def check_provider(settings: LlmSettings) -> DiagnosticReport:
         model=settings.model,
         key_state=key_state,
         models=tuple(models),
+        warning=_model_warning(provider, settings.model, models),
     )
+
+
+def _model_warning(provider: Provider, model: str, models: list[str]) -> str:
+    """Signale un modèle configuré que le fournisseur ne propose plus.
+
+    Les catalogues changent souvent (Groq a retiré ``llama-3.3-70b-versatile``) :
+    prévenir ici évite de chercher longtemps la cause d'un HTTP 404.
+    """
+    if not models or not model or _has_model(models, model):
+        return ""
+    fallback = preferred_model(provider, models)
+    if provider.key == "ollama":
+        return f"« {model} » n'est pas installé localement (ollama pull {model})."
+    if fallback:
+        return f"« {model} » n'existe plus chez {provider.label} ; repli auto sur « {fallback} »."
+    return f"« {model} » n'est pas proposé par {provider.label} avec cette clé."
+
+
+def _has_model(models: list[str], wanted: str) -> bool:
+    """Compare aussi les noms sans étiquette de version (``gemma4`` ~ ``gemma4:latest``)."""
+    bare = {name.split(":", 1)[0] for name in models}
+    return wanted in models or wanted.split(":", 1)[0] in bare
 
 
 def _key_state(settings: LlmSettings, requires_key: bool) -> str:

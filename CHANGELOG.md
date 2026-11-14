@@ -3,6 +3,35 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ;
 le projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.3.2] — 2026-11-15
+
+### Corrigé
+
+- **Échec de génération chez Groq (`HTTP 404 model_not_found`) alors que la clé
+  fonctionnait** : le modèle mémorisé (`llama-3.3-70b-versatile`) avait été retiré
+  du catalogue. Deux corrections :
+  - le menu des modèles n'affiche plus que la liste réelle du fournisseur ; les
+    suggestions du registre ne sont plus réinjectées par-dessus (elles
+    réintroduisaient le modèle disparu et le laissaient sélectionné) ;
+  - si la génération échoue pour un modèle absent, le client bascule **une seule
+    fois** sur le meilleur modèle accessible (préférence du registre, puis ordre de
+    l'API) et le dialogue indique `modèle <nom>` dans son état. Sans repli possible,
+    l'erreur énumère les modèles disponibles avec la clé.
+- Les modèles non conversationnels (`whisper`, `orpheus`, `prompt-guard`,
+  `safeguard`, `embed`…) sont écartés des listes : les proposer garantissait un
+  échec.
+- `--check-llm` signale un modèle mémorisé qui n'existe plus (ligne `Note`, repli
+  annoncé) au lieu de le présenter comme valide ; côté Ollama, il rappelle la
+  commande `ollama pull` à lancer.
+- Modèles Groq suggérés mis à jour (`openai/gpt-oss-120b`, `openai/gpt-oss-20b`,
+  `qwen/qwen3.8-27b`).
+
+### Ajouté
+
+- 327 tests (+18) : filtrage des modèles de chat, détection d'un modèle retiré,
+  bascule automatique, absence de nouvelle tentative sur une erreur d'authentification,
+  absence de fusion des suggestions, avertissement du diagnostic.
+
 ## [1.3.1] — 2026-11-15
 
 ### Corrigé

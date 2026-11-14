@@ -29,13 +29,27 @@ def pump(window, cycles: int = 3) -> None:
 class StubLlm:
     """Client factice : renvoie un JSON de chapitres immédiatement."""
 
-    def __init__(self, payload: str = '[{"titre": "Suites", "minutes": 120}]', **_kwargs) -> None:
+    #: Catalogue simulé, réaliste : il contient les modèles utilisés par les tests.
+    CATALOGUE = (
+        "openai/gpt-oss-120b",
+        "llama-3.1-8b-instant",
+        "open-mistral-nemo",
+        "gemini-2.5-flash",
+    )
+
+    def __init__(
+        self,
+        payload: str = '[{"titre": "Suites", "minutes": 120}]',
+        models: tuple[str, ...] | None = None,
+        **_kwargs,
+    ) -> None:
         self.payload = payload
+        self.catalogue = list(models if models is not None else self.CATALOGUE)
         self.calls = 0
         self.settings_seen: list[LlmSettings] = []
 
     def models(self) -> list[str]:
-        return ["stub:1"]
+        return list(self.catalogue)
 
     def complete(self, _prompt: str) -> str:
         self.calls += 1
@@ -316,7 +330,9 @@ def test_selecting_a_hosted_provider_reveals_the_key_field(app) -> None:
         assert dialog.key_entry.winfo_manager() == "grid"
         assert dialog.save_key_check.winfo_manager() == "grid"
         assert dialog.think_check.winfo_manager() == ""  # pas de « think » hébergé
-        assert "llama" in dialog.model_menu.get()
+        # Le modèle sélectionné vient du catalogue réel, dans l'ordre de préférence
+        # du registre (jamais un modèle retiré par le fournisseur).
+        assert dialog.model_menu.get() == "openai/gpt-oss-120b"
     finally:
         dialog.close()
 
@@ -366,9 +382,8 @@ def test_remembered_configuration_is_persisted(app, tmp_path) -> None:
     stub = StubLlm()
     dialog = make_dialog(app, stub, config_path=config_path)
     try:
-        dialog._apply_provider(get_provider("groq"), model="llama-3.1-8b-instant")
-        dialog.key_entry.delete(0, "end")
-        dialog.key_entry.insert(0, "gsk_memorisee")
+        dialog._apply_provider(get_provider("groq"), api_key="gsk_memorisee")
+        dialog.model_menu.set("llama-3.1-8b-instant")
         dialog.save_key_var.set(True)
         dialog.topic_entry.insert(0, "Analyse réelle")
 
@@ -417,5 +432,42 @@ def test_switching_back_to_ollama_hides_the_key(app) -> None:
         assert dialog._provider.key == "ollama"
         assert dialog.key_entry.winfo_manager() == ""
         assert dialog.settings().api_key == ""
+    finally:
+        dialog.close()
+
+
+def test_stale_stored_model_is_replaced_by_an_available_one(app) -> None:
+    """Un modèle retiré par le fournisseur ne doit jamais rester sélectionné."""
+    stub = StubLlm(models=("allam-2-7b", "openai/gpt-oss-20b"))
+    dialog = make_dialog(app, stub)
+    try:
+        dialog._apply_provider(
+            get_provider("groq"), model="llama-3.3-70b-versatile", api_key="gsk_x"
+        )
+        pump(dialog)
+
+        assert "llama-3.3-70b-versatile" not in dialog.model_menu.cget("values")
+        assert dialog.model_menu.get() == "openai/gpt-oss-20b"
+        assert dialog.settings().model == "openai/gpt-oss-20b"
+    finally:
+        dialog.close()
+
+
+def test_generation_reports_the_automatically_used_model(app) -> None:
+    class FallbackLlm(StubLlm):
+        used_model = "openai/gpt-oss-20b"
+
+    stub = FallbackLlm('[{"titre": "Suites", "minutes": 90}]')
+    dialog = make_dialog(app, stub)
+    try:
+        dialog._apply_provider(get_provider("groq"), api_key="gsk_x")
+        dialog.key_entry.delete(0, "end")
+        dialog.key_entry.insert(0, "gsk_x")
+        dialog.topic_entry.insert(0, "Analyse réelle")
+
+        dialog.generate()
+        wait_for_generation(dialog)
+
+        assert "modèle openai/gpt-oss-20b" in dialog.status.cget("text")
     finally:
         dialog.close()

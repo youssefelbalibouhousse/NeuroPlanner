@@ -76,3 +76,42 @@ def test_report_truncates_long_model_lists(monkeypatch: pytest.MonkeyPatch) -> N
 
     text = "\n".join(check_provider(settings_for("ollama")).lines())
     assert "(+4)" in text
+
+
+def test_retired_hosted_model_is_flagged_with_the_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cas Groq : le modèle mémorisé n'existe plus → prévenir et annoncer le repli."""
+    stub = StubClient(models=["openai/gpt-oss-120b", "allam-2-7b"])
+    monkeypatch.setattr("neuroplanner.services.diagnostics.create_client", lambda _s: stub)
+
+    settings = settings_for("groq", api_key="gsk_test1234", model="llama-3.3-70b-versatile")
+    report = check_provider(settings)
+
+    assert report.ok is True  # la clé fonctionne : ce n'est pas un échec
+    assert "repli auto sur « openai/gpt-oss-120b »" in report.warning
+    text = "\n".join(report.lines())
+    assert "Note     :" in text
+
+
+def test_current_model_has_no_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = StubClient(models=["openai/gpt-oss-120b"])
+    monkeypatch.setattr("neuroplanner.services.diagnostics.create_client", lambda _s: stub)
+
+    report = check_provider(settings_for("groq", api_key="gsk_test1234"))
+    assert report.warning == ""
+
+
+def test_missing_ollama_model_suggests_pull(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = StubClient(models=["gemma4:latest"])
+    monkeypatch.setattr("neuroplanner.services.diagnostics.create_client", lambda _s: stub)
+
+    settings = settings_for("ollama", model="qwen2.5:3b")
+    report = check_provider(settings)
+
+    assert "ollama pull qwen2.5:3b" in report.warning
+
+
+def test_ollama_tags_are_compared_without_their_version(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = StubClient(models=["gemma4:latest"])
+    monkeypatch.setattr("neuroplanner.services.diagnostics.create_client", lambda _s: stub)
+
+    assert check_provider(settings_for("ollama", model="gemma4")).warning == ""

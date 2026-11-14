@@ -33,6 +33,7 @@ from neuroplanner.services.providers import (
     Provider,
     create_client,
     get_provider,
+    preferred_model,
     provider_from_label,
     settings_for,
 )
@@ -75,6 +76,9 @@ class ImportDialog(ModalDialog):
         self._result: list[Chapter] | None = None
         self._worker_error: str | None = None
         self._previewed = False
+        self._client: object | None = None
+        #: Suffixe d'état indiquant un basculement automatique de modèle.
+        self._note = ""
 
         super().__init__(master, "Importer un programme", 680, 780)
         self._build()
@@ -424,7 +428,12 @@ class ImportDialog(ModalDialog):
 
     # -- fournisseur ------------------------------------------------------- #
     def _models_for(self, provider: Provider, api_key: str = "") -> list[str]:
-        """Modèles du fournisseur : liste réelle si possible, suggestions sinon."""
+        """Modèles du fournisseur : liste réelle si possible, suggestions sinon.
+
+        Quand la liste réelle est disponible, elle fait foi **seule** : y
+        réinjecter les suggestions du registre ferait réapparaître un modèle
+        retiré par le fournisseur (cas Groq : modèle supprimé → HTTP 404).
+        """
         suggested = list(provider.models) or [provider.default_model]
         settings = settings_for(provider.key, model=provider.default_model, api_key=api_key)
         if provider.requires_key and not settings.api_key:
@@ -432,8 +441,15 @@ class ImportDialog(ModalDialog):
         with contextlib.suppress(Exception):
             found = self._client_factory(settings).models()  # type: ignore[attr-defined]
             if found:
-                return list(dict.fromkeys([*found, *suggested]))
+                return list(found)
         return suggested
+
+    def _default_model_for(self, provider: Provider, models: list[str], requested: str) -> str:
+        """Modèle à sélectionner : celui demandé s'il existe, sinon le meilleur."""
+        chosen = (requested or "").strip()
+        if chosen in models:
+            return chosen
+        return preferred_model(provider, models) or chosen or models[0]
 
     def _apply_provider(
         self,
@@ -448,8 +464,7 @@ class ImportDialog(ModalDialog):
 
         models = self._models_for(provider, api_key)
         self.model_menu.configure(values=models)
-        chosen = (model or "").strip()
-        self.model_menu.set(chosen if chosen in models else models[0])
+        self.model_menu.set(self._default_model_for(provider, models, model))
 
         self.key_entry.delete(0, "end")
         if api_key:
@@ -524,6 +539,7 @@ class ImportDialog(ModalDialog):
         self._invalidate_preview()
 
     def _invalidate_preview(self, _event: object = None) -> None:
+        self._note = ""
         if self._previewed:
             self._previewed = False
             self._set_preview("(aperçu obsolète — clique sur « Aperçu »)")
@@ -563,6 +579,7 @@ class ImportDialog(ModalDialog):
         self.status.configure(text=f"{self._provider.label} · en cours…", text_color=PALETTE.muted)
 
         client = self._client_factory(settings)
+        self._client = client
         count = self._selected_count()
 
         def work() -> None:
@@ -609,6 +626,8 @@ class ImportDialog(ModalDialog):
             return
 
         self.set_chapters_text(format_chapters(chapters))
+        used = getattr(self._client, "used_model", None)
+        self._note = f" · modèle {used}" if used else ""
         self.status.configure(
             text=f"{len(chapters)} chapitres · à relire", text_color=PALETTE.green
         )
@@ -642,7 +661,9 @@ class ImportDialog(ModalDialog):
             f"{DAY_LABELS[key][:3]} {sum(block.minutes for block in blocks)} min"
             for key, blocks in week.items()
         )
-        self.status.configure(text=f"{len(chapters)} chapitres", text_color=PALETTE.muted)
+        self.status.configure(
+            text=f"{len(chapters)} chapitres{self._note}", text_color=PALETTE.muted
+        )
         self.footer.show_error(f"Prêt : {points}.")
         return True
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Final
 
 APP_NAME: Final[str] = "NeuroPlanner"
-APP_VERSION: Final[str] = "1.3.1"
+APP_VERSION: Final[str] = "1.3.2"
 APP_TAGLINE: Final[str] = "5 h / jour · neuroplasticité"
 
 DATA_FILENAME: Final[str] = "neuro_progress.json"

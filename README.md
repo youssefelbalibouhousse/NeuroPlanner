@@ -224,6 +224,14 @@ Fournisseur hébergé : crée une clé gratuite, choisis le fournisseur dans le
 dialogue, colle la clé, puis **Générer**. La liste des modèles est récupérée
 auprès du fournisseur quand la clé est valide.
 
+> **Les catalogues changent.** Un fournisseur peut retirer un modèle du jour au
+> lendemain (Groq a supprimé `llama-3.3-70b-versatile`). Le menu n'affiche donc
+> que les modèles réellement accessibles avec ta clé — les suggestions codées en
+> dur ne servent que de repli hors ligne. Si un modèle mémorisé a disparu,
+> l'application bascule une fois, automatiquement, sur le meilleur modèle
+> disponible et l'indique dans l'état du dialogue. `--check-llm` signale le cas
+> avec une ligne `Note`.
+
 ### Où va ma clé ?
 
 - Elle n'est **jamais** écrite dans le dépôt ni dans `neuro_plan.json`.
