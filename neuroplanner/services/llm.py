@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from neuroplanner.config import APP_VERSION
 from neuroplanner.models import Chapter
 from neuroplanner.services.chapters import (
     MAX_CHAPTER_MINUTES,
@@ -28,6 +29,10 @@ DEFAULT_MODEL = "qwen2.5:3b"
 DEFAULT_BASE_URL = "http://localhost:11434"
 #: Nombre de chapitres demandé par défaut (un par jour, deux pour les gros sujets).
 DEFAULT_CHAPTER_COUNT = 12
+
+#: Certains fournisseurs (Groq derrière Cloudflare) refusent le User-Agent
+#: par défaut d'urllib en renvoyant « 403 error code: 1010 ».
+USER_AGENT = f"NeuroPlanner/{APP_VERSION}"
 
 #: ``(url, payload, headers, timeout) -> objet JSON``. Injectable pour les tests.
 Transport = Callable[[str, dict | None, dict, float], dict]
@@ -42,7 +47,7 @@ class LlmClient(Protocol):
 
     def complete(self, prompt: str) -> str: ...
 
-    def models(self) -> list[str]: ...
+    def models(self, *, strict: bool = False) -> list[str]: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,7 +224,12 @@ def request_json(
     request = urllib.request.Request(
         url,
         data=data,
-        headers={"Content-Type": "application/json", **headers},
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json",
+            **headers,
+        },
         method="POST" if data else "GET",
     )
     try:
@@ -253,9 +263,17 @@ def _http_message(error: urllib.error.HTTPError, provider_label: str, api_key: s
     except Exception:  # pragma: no cover - corps indisponible
         detail = ""
     detail = redact(detail[:300], api_key)
+    lowered = detail.casefold()
 
-    if error.code in (401, 403):
-        hint = f" Clé refusée par {provider_label} : vérifie qu'elle est valide et active."
+    # Gemini répond 400 « Please pass a valid API key » : un code 400 ne suffit
+    # donc pas à conclure à un problème de modèle.
+    key_problem = any(
+        token in lowered
+        for token in ("api key", "api_key", "invalid key", "invalid_api_key", "unauthorized")
+    )
+
+    if error.code in (401, 403) or key_problem:
+        hint = f" Clé refusée ou invalide pour {provider_label} : vérifie la clé et son activation."
     elif error.code == 404:
         hint = f" Modèle ou URL introuvable chez {provider_label}."
     elif error.code == 429:
@@ -266,7 +284,7 @@ def _http_message(error: urllib.error.HTTPError, provider_label: str, api_key: s
     elif error.code >= 500:
         hint = f" {provider_label} est momentanément indisponible : réessaie plus tard."
     elif error.code == 400:
-        hint = " Requête refusée : le modèle ne gère peut-être pas cette option."
+        hint = f" Requête refusée par {provider_label} : vérifie le modèle choisi."
     else:
         hint = ""
     return f"{provider_label} a répondu HTTP {error.code}.{hint}\n{detail}".strip()
@@ -293,11 +311,17 @@ class OllamaClient:
         self.settings = settings or LlmSettings.from_env()
         self._transport = transport or _ollama_transport
 
-    def models(self) -> list[str]:
-        """Modèles installés localement (liste vide si le serveur est absent)."""
+    def models(self, *, strict: bool = False) -> list[str]:
+        """Modèles installés localement.
+
+        Liste vide si le serveur est absent ; avec ``strict``, l'erreur remonte
+        (utile à la commande de diagnostic).
+        """
         try:
             payload = self._transport(f"{self.settings.base_url}/api/tags", None, {}, 10.0)
         except LlmError:
+            if strict:
+                raise
             return []
         entries = payload.get("models", [])
         names = [entry.get("name", "") for entry in entries if isinstance(entry, dict)]

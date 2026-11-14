@@ -3,6 +3,28 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ;
 le projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.3.1] — 2026-11-15
+
+### Corrigé
+
+- **Groq était inutilisable** : l'API (derrière Cloudflare) répondait
+  `403 error code: 1010` au User-Agent par défaut d'`urllib`. Toutes les requêtes
+  envoient désormais `User-Agent: NeuroPlanner/<version>` ; un test verrouille ce
+  comportement.
+- Gemini renvoie `400 « Please pass a valid API key »` pour une clé absente ou
+  invalide : le message affiche maintenant « Clé refusée ou invalide » au lieu de
+  suggérer un problème de modèle.
+- `--provider X` sans `--model` reprend le modèle par défaut du fournisseur, et non
+  celui du fournisseur précédent.
+
+### Ajouté
+
+- `--check-llm` : diagnostic en une commande (URL, clé masquée, liste des modèles),
+  sans interface, sans jeton consommé, code de sortie `0`/`1`.
+- `models(strict=True)` sur les deux clients : le diagnostic remonte l'erreur au lieu
+  d'une liste vide.
+- 308 tests (+7).
+
 ## [1.3.0] — 2026-11-15
 
 ### Ajouté

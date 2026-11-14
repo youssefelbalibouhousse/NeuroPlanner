@@ -75,6 +75,23 @@ python main.py
 | `neuroplanner` / `neuroplanner-gui` | commandes installées par `pip install -e .` (la variante GUI n'ouvre pas de console sous Windows) |
 | `python -m neuroplanner --data-file .\progression.json` | utilise un fichier de progression précis (le plan est créé à côté) |
 | `python -m neuroplanner --plan-file .\mon_plan.json` | utilise un planning précis |
+| `python -m neuroplanner --check-llm` | **teste le fournisseur LLM** (URL, clé, modèles) puis quitte |
+| `python -m neuroplanner --check-llm --provider groq` | teste un fournisseur précis |
+
+### Vérifier la connexion au modèle
+
+Aucun jeton n'est consommé : la commande appelle seulement la liste des modèles.
+
+```text
+> python -m neuroplanner --check-llm --provider groq
+Groq (gratuit) — OK
+  URL      : https://api.groq.com/openai/v1
+  Modèle   : llama-3.3-70b-versatile
+  Clé      : présente (••••a1b2)
+  Modèles  : gemma2-9b-it, llama-3.1-8b-instant, llama-3.3-70b-versatile …
+```
+
+Le code de sortie vaut `0` en cas de succès, `1` sinon (utilisable dans un script).
 
 ## Où sont mes données ?
 

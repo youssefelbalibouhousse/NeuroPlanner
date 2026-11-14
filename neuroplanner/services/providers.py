@@ -200,13 +200,17 @@ class OpenAiCompatClient:
         self._transport = transport or self._default_transport
 
     # -- API --------------------------------------------------------------- #
-    def models(self) -> list[str]:
-        """Modèles disponibles pour cette clé (liste vide si l'appel échoue)."""
+    def models(self, *, strict: bool = False) -> list[str]:
+        """Modèles disponibles pour cette clé.
+
+        Avec ``strict``, une erreur de clé ou de réseau remonte au lieu de
+        renvoyer une liste vide (utilisé par ``--check-llm``).
+        """
         try:
-            payload = self._transport(
-                f"{self._base}/models", None, self._headers(), 20.0
-            )
+            payload = self._transport(f"{self._base}/models", None, self._headers(), 20.0)
         except LlmError:
+            if strict:
+                raise
             return []
         entries = payload.get("data", [])
         names = [

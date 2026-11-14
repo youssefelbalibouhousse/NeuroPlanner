@@ -252,3 +252,42 @@ def test_error_detail_never_leaks_the_key(monkeypatch: pytest.MonkeyPatch) -> No
         )
     assert "gsk_ABCDEFGHIJKLMNOP" not in str(caught.value)
     assert "clé masquée" in str(caught.value)
+
+
+def test_requests_carry_a_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Groq (Cloudflare) répond 403 « error code: 1010 » au User-Agent d'urllib."""
+    import urllib.request
+
+    from neuroplanner.services.llm import USER_AGENT, request_json
+
+    captured: dict = {}
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self) -> bytes:
+            return b'{"ok": true}'
+
+    def fake_urlopen(request, timeout=None):
+        captured["user_agent"] = request.get_header("User-agent")
+        captured["method"] = request.get_method()
+        return Response()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    request_json("http://x", {"a": 1}, {"Authorization": "Bearer k"}, 1.0)
+
+    assert captured["user_agent"] == USER_AGENT
+    assert captured["user_agent"].startswith("NeuroPlanner/")
+    assert captured["method"] == "POST"
+
+
+def test_gemini_style_400_is_read_as_a_key_problem(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gemini répond 400 « Please pass a valid API key » : le message doit rester clair."""
+    body = b'{"error": {"code": 400, "message": "Please pass a valid API key"}}'
+    client = _http_error_client(monkeypatch, 400, body)
+    with pytest.raises(LlmError, match="Clé refusée ou invalide"):
+        client.complete("x")
