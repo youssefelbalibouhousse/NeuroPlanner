@@ -78,6 +78,26 @@ python main.py
 | `python -m neuroplanner --check-llm` | **teste le fournisseur LLM** (URL, clé, modèles) puis quitte |
 | `python -m neuroplanner --check-llm --provider groq` | teste un fournisseur précis |
 
+### Icône sur le Bureau (Windows)
+
+Un simple raccourci suffit — inutile de construire un exécutable pour ton usage
+quotidien, et il reste à jour à chaque modification du code.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\create_shortcut.ps1
+```
+
+Le script crée `NeuroPlanner.lnk` sur le Bureau et dans le menu Démarrer, avec
+l'icône du paquet (`neuroplanner/assets/neuroplanner.ico`), sans fenêtre de console.
+Il est idempotent : relance-le pour mettre le raccourci à jour, ou passe
+`-Python .venv\Scripts\python.exe` pour viser un autre interpréteur.
+Astuce : clic droit sur le raccourci → **Épingler à la barre des tâches**.
+
+> **Et un `.exe` autonome ?** Utile seulement pour partager l'application avec
+> quelqu'un qui n'a pas Python (PyInstaller, ~60 Mo, à reconstruire à chaque
+> changement). Tant que le périmètre fonctionnel évolue, le raccourci est plus
+> pratique ; l'empaquetage viendra quand l'app sera figée.
+
 ### Vérifier la connexion au modèle
 
 Aucun jeton n'est consommé : la commande appelle seulement la liste des modèles.
@@ -86,9 +106,16 @@ Aucun jeton n'est consommé : la commande appelle seulement la liste des modèle
 > python -m neuroplanner --check-llm --provider groq
 Groq (gratuit) — OK
   URL      : https://api.groq.com/openai/v1
-  Modèle   : llama-3.3-70b-versatile
+  Modèle   : openai/gpt-oss-120b
   Clé      : présente (••••a1b2)
-  Modèles  : gemma2-9b-it, llama-3.1-8b-instant, llama-3.3-70b-versatile …
+  Modèles  : allam-2-7b, openai/gpt-oss-120b, openai/gpt-oss-20b, qwen/qwen3.8-27b
+```
+
+La ligne `Modèle` rappelle le modèle configuré ; si le fournisseur l'a retiré, une
+ligne `Note` l'annonce et indique le repli automatique :
+
+```text
+  Note     : « llama-3.3-70b-versatile » n'existe plus chez Groq (gratuit) ; repli auto sur « openai/gpt-oss-120b ».
 ```
 
 Le code de sortie vaut `0` en cas de succès, `1` sinon (utilisable dans un script).
@@ -166,9 +193,11 @@ NeuroPlanner/
 │   │                           # timer_panel, chart, header, dialogs,
 │   │                           # import_dialog, widgets
 │   └── assets/                 # icône et logo
-├── tests/                      # 297 tests (dont intégration GUI)
+├── tests/                      # 327 tests (dont intégration GUI)
 ├── docs/ARCHITECTURE.md        # modules, format du plan, pipeline d'import
-└── tools/make_icon.py          # régénère l'icône
+└── tools/
+    ├── make_icon.py            # régénère l'icône
+    └── create_shortcut.ps1     # raccourcis Bureau + menu Démarrer (Windows)
 ```
 
 Détail des responsabilités, format du plan et recettes de modification :

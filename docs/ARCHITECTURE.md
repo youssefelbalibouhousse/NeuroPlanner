@@ -238,7 +238,8 @@ masqué pour les fournisseurs hébergés (non supporté). Timeout par défaut : 
 | `test_chapters.py` | table des matières : puces, numéros, durées, doublons | non |
 | `test_generation.py` | 5 h/jour, contenu complet, reliquats, déterminisme | non |
 | `test_llm.py` | prompt, extraction JSON, erreurs réseau (transport factice) | non |
-| `test_providers.py` | registre, réglages, client OpenAI-compatible, redaction | non |
+| `test_providers.py` | registre, réglages, client OpenAI-compatible, redaction, repli de modèle | non |
+| `test_diagnostics.py` | rapport `--check-llm`, modèle obsolète, codes de sortie | non |
 | `test_llm_config.py` | fichier de réglages, clé masquée, permissions | non |
 | `test_stats.py` | agrégations, bornes, domaines vides | non |
 | `test_countdown.py` | pause/reprise/fin, horloge simulée | non |
@@ -249,7 +250,7 @@ masqué pour les fournisseurs hébergés (non supporté). Timeout par défaut : 
 | `test_ui_import.py` | import : aperçu, application, assistant LLM (stub), prune | **oui** |
 
 ```powershell
-python -m pytest                  # tout (297 tests, 1 ignoré sous Windows)
+python -m pytest                  # tout (327 tests, 1 ignoré sous Windows)
 python -m pytest -m "not gui"     # sans écran (utilisé par la CI)
 ```
 

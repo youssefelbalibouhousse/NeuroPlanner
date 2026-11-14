@@ -3,6 +3,21 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ;
 le projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.3.3] — 2026-11-15
+
+### Ajouté
+
+- `tools/create_shortcut.ps1` : crée les raccourcis **Bureau + menu Démarrer** avec
+  l'icône du paquet et sans fenêtre de console (lanceur `neuroplanner-gui.exe`,
+  avec repli sur `pythonw -m neuroplanner`). Idempotent, `-Python` pour viser un
+  interpréteur précis, `-NoStartMenu` pour le Bureau seul.
+
+### Documentation
+
+- README : section « Icône sur le Bureau » et explication de ce qu'apporte — ou
+  non — un `.exe` autonome (PyInstaller), à réserver au partage de l'app.
+- Exemple `--check-llm` mis à jour (modèles Groq actuels, ligne `Note`).
+
 ## [1.3.2] — 2026-11-15
 
 ### Corrigé
