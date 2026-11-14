@@ -26,9 +26,9 @@ d'encodage/consolidation/récupération, graphique de refocalisation par pilier 
   pilier (la suppression retire ses tâches après confirmation).
 - **Tâches modifiables** : ajout (`+` sur un bloc), édition et suppression (`✎` sur une
   ligne), avec contrôle du pilier et de la durée.
-- **Import de programme** : colle une table des matières ou laisse un **LLM local
-  (Ollama)** proposer les chapitres ; l'application répartit le tout sur les 6 jours,
-  avec aperçu avant application.
+- **Import de programme** : colle une table des matières ou laisse un **LLM** proposer
+  les chapitres — local (Ollama) ou hébergé à palier gratuit (Groq, Gemini, Mistral) ;
+  l'application répartit le tout sur les 6 jours, avec aperçu avant application.
 - **Statistiques en direct** : avancement du jour, de la semaine, par pilier.
 - **Minuteurs** : Focus 45, Pause 10, Feuille blanche 3 ; Démarrer / Pause / Reset, bip de fin.
 - **Graphique de refocalisation** (Matplotlib) : rouge < 50 %, orange 50–79 %, vert ≥ 80 %,
@@ -39,6 +39,10 @@ d'encodage/consolidation/récupération, graphique de refocalisation par pilier 
 | Gestion des domaines | Édition d'une tâche | Import d'un programme |
 |---|---|---|
 | ![Domaines](docs/dialog_domains.png) | ![Tâche](docs/dialog_task.png) | ![Import](docs/dialog_import.png) |
+
+Choisir le fournisseur du modèle (local ou hébergé gratuit) :
+
+![Fournisseurs](docs/dialog_providers.png)
 
 ## Installation
 
@@ -80,6 +84,7 @@ Deux fichiers JSON distincts, écrits automatiquement :
 |---|---|
 | `neuro_progress.json` | cases cochées + statistiques (sessions, temps de focus) |
 | `neuro_plan.json` | domaines, blocs horaires et tâches (le planning) |
+| `llm_settings.json` | fournisseur, modèle et — si tu le demandes — la clé d'API |
 
 Emplacements :
 
@@ -130,11 +135,13 @@ NeuroPlanner/
 │   │   ├── plan_store.py       # planning modifiable persisté
 │   │   ├── presets.py          # préréglages des minuteurs
 │   │   ├── store.py            # progression persistée
+│   │   ├── llm_config.py       # fournisseur/modèle/clé (hors dépôt)
 │   │   └── jsonfile.py         # lecture/écriture JSON atomique
 │   ├── services/
 │   │   ├── chapters.py         # lecture d'une table des matières
 │   │   ├── generation.py       # chapitres → planning 5 h/jour
-│   │   ├── llm.py              # client Ollama (chapitres par LLM local)
+│   │   ├── llm.py              # prompt, parsing, client Ollama, transport
+│   │   ├── providers.py        # registre + client « OpenAI compatible »
 │   │   ├── countdown.py        # minuteur pur (testable sans écran)
 │   │   ├── stats.py            # agrégations de progression
 │   │   └── sound.py            # signal sonore de fin
@@ -142,7 +149,7 @@ NeuroPlanner/
 │   │                           # timer_panel, chart, header, dialogs,
 │   │                           # import_dialog, widgets
 │   └── assets/                 # icône et logo
-├── tests/                      # 260 tests (dont intégration GUI)
+├── tests/                      # 297 tests (dont intégration GUI)
 ├── docs/ARCHITECTURE.md        # modules, format du plan, pipeline d'import
 └── tools/make_icon.py          # régénère l'icône
 ```
@@ -166,13 +173,29 @@ Dans le code :
 - **Seuils de refocalisation** → `REFOCUS_BELOW` / `MASTERY_FROM` dans
   `neuroplanner/services/stats.py`.
 
-## Générer un programme avec un LLM local
+## Générer un programme avec un LLM
 
 Principe : **le modèle propose la structure (chapitres), l'application construit le
 planning**. Le résultat est donc prévisible, vérifiable dans l'aperçu, et
 indépendant du modèle utilisé.
 
-### 1. Installer un modèle local (gratuit, hors ligne)
+Barre latérale → **« Importer un programme… »** → décris le sujet → **Générer**.
+Les chapitres proposés s'écrivent dans la zone de texte : relis-les, corrige-les,
+puis **Aperçu** et **Appliquer au planning**.
+
+Le mode « Table des matières » fonctionne sans aucun LLM : colle simplement ta liste
+(`1. Limites (90 min)`, `- Intégrales — 1 h 30`, …), la durée est facultative.
+
+### Fournisseurs disponibles
+
+| Fournisseur | Type | Palier gratuit | Clé |
+|---|---|---|---|
+| **Ollama** | local, hors ligne | illimité (ta machine) | aucune |
+| **Groq** | hébergé, très rapide | oui, généreux | [console.groq.com/keys](https://console.groq.com/keys) |
+| **Gemini** | hébergé (Google AI Studio) | oui | [aistudio.google.com/apikey](https://aistudio.google.com/apikey) |
+| **Mistral** | hébergé | oui | [console.mistral.ai/api-keys](https://console.mistral.ai/api-keys) |
+
+Ollama en local :
 
 ```powershell
 winget install Ollama.Ollama      # ou https://ollama.com/download
@@ -180,36 +203,42 @@ ollama pull qwen2.5:3b            # rapide (~17 s pour 12 chapitres)
 ollama serve                      # généralement lancé automatiquement
 ```
 
-### 2. Utiliser l'assistant
+Fournisseur hébergé : crée une clé gratuite, choisis le fournisseur dans le
+dialogue, colle la clé, puis **Générer**. La liste des modèles est récupérée
+auprès du fournisseur quand la clé est valide.
 
-Barre latérale → **« Importer un programme… »** → décris le sujet → **Générer**.
-Les chapitres proposés s'écrivent dans la zone de texte : relis-les, corrige-les,
-puis **Aperçu** et **Appliquer au planning**.
+### Où va ma clé ?
 
-Le mode « Table des matières » fonctionne sans LLM : colle simplement ta liste
-(`1. Limites (90 min)`, `- Intégrales — 1 h 30`, …), la durée est facultative.
+- Elle n'est **jamais** écrite dans le dépôt ni dans `neuro_plan.json`.
+- Elle est mémorisée, si tu laisses la case cochée, dans
+  `llm_settings.json` à côté de tes données (`%APPDATA%\NeuroPlanner\` par défaut),
+  fichier ignoré par git et créé en `0600` là où les permissions POSIX existent.
+- Tu peux aussi la fournir par variable d'environnement, ce qui évite tout stockage
+  sur disque : `setx GROQ_API_KEY "gsk_…"`.
+- Elle n'apparaît jamais dans un message d'erreur (redaction automatique).
 
-### Réglages
+| Variable | Rôle |
+|---|---|
+| `NEUROPLANNER_LLM_PROVIDER` | fournisseur par défaut (`ollama`, `groq`, `gemini`, `mistral`) |
+| `NEUROPLANNER_LLM_MODEL` | modèle par défaut |
+| `NEUROPLANNER_LLM_KEY` | clé générique (sinon `GROQ_API_KEY`, `GEMINI_API_KEY`, `MISTRAL_API_KEY`) |
+| `NEUROPLANNER_LLM_THINK` | `1` active le raisonnement étendu (Ollama) |
+| `NEUROPLANNER_OLLAMA_URL` | serveur Ollama (`http://localhost:11434` par défaut) |
 
-| Variable | Défaut | Rôle |
+### Mesures sur la machine de développement
+
+6 chapitres, même prompt :
+
+| Modèle | Mode | Durée |
 |---|---|---|
-| `NEUROPLANNER_OLLAMA_URL` | `http://localhost:11434` | serveur Ollama (réseau local ou distant) |
-| `NEUROPLANNER_LLM_MODEL` | `qwen2.5:3b` | modèle proposé par défaut |
-| `NEUROPLANNER_LLM_THINK` | *(vide)* | `1` active le raisonnement étendu par défaut |
+| `qwen2.5:3b` (local) | normal | **~17 s** |
+| `gemma4` (local) | normal | ~142 s |
+| `gemma4` (local) | raisonnement | ~161 s (`think: true` accepté, meilleur enchaînement) |
 
-L'option **« Raisonnement étendu »** du dialogue correspond au paramètre `think`
-d'Ollama (modèles `thinking`). Mesures sur une machine de test, 6 chapitres :
-
-| Modèle | Mode | Durée | Qualité |
-|---|---|---|---|
-| `qwen2.5:3b` | normal | ~17 s | correct, chapitres un peu génériques |
-| `gemma4` | normal | ~142 s | bon découpage |
-| `gemma4` | raisonnement | ~161 s | meilleur enchaînement (suites → séries) |
-
-Aucune clé d'API n'est nécessaire et aucun appel ne quitte la machine. Un
-fournisseur hébergé (Groq, Gemini…) reste possible : il suffit d'implémenter le
-même contrat `complete(prompt) -> str` — voir
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#pipeline-dimport).
+La latence d'un fournisseur hébergé dépend du réseau et de la file d'attente ; le
+timeout par défaut est de 300 s et la génération tourne dans un fil, l'interface
+reste donc réactive. En cas de quota atteint (`HTTP 429`), le message propose
+d'attendre une minute, de changer de modèle ou de revenir au local.
 
 ## Développement
 
@@ -225,15 +254,14 @@ python -m pytest --cov=neuroplanner --cov-report=term-missing
 Les tests d'interface sont marqués `gui` : ils construisent une vraie fenêtre Tk
 avec des fichiers temporaires, cochent des tâches, changent de jour, éditent le
 plan via les dialogues, importent un programme et font tourner un minuteur
-accéléré. Les appels au LLM sont simulés (transport factice) : la suite ne
-nécessite ni réseau ni modèle installé.
+accéléré. Les appels au LLM sont simulés (transport factice + `urllib` monkeypatché) :
+la suite ne nécessite ni réseau, ni clé, ni modèle installé.
 
 ## Feuille de route
 
 - [x] Planning modifiable : domaines, tâches, durées.
-- [x] **Génération du planning** à partir de chapitres, avec assistant LLM local
-      (Ollama) et aperçu avant application.
-- [ ] Fournisseur hébergé à palier gratuit (Groq / Gemini) derrière le même contrat.
+- [x] **Génération du planning** à partir de chapitres, avec assistant LLM
+      (Ollama local ou fournisseur hébergé à palier gratuit) et aperçu avant application.
 - [ ] Historique multi-semaines et courbe de rétention.
 - [ ] Thème clair commutable et export CSV.
 - [ ] Packaging `PyInstaller` (exécutable Windows autonome).

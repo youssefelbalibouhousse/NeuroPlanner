@@ -8,13 +8,14 @@ from pathlib import Path
 from typing import Final
 
 APP_NAME: Final[str] = "NeuroPlanner"
-APP_VERSION: Final[str] = "1.2.0"
+APP_VERSION: Final[str] = "1.3.0"
 APP_TAGLINE: Final[str] = "5 h / jour · neuroplasticité"
 
 DATA_FILENAME: Final[str] = "neuro_progress.json"
 DATA_ENV_VAR: Final[str] = "NEUROPLANNER_DATA"
 PLAN_FILENAME: Final[str] = "neuro_plan.json"
 PLAN_ENV_VAR: Final[str] = "NEUROPLANNER_PLAN"
+LLM_CONFIG_FILENAME: Final[str] = "llm_settings.json"
 
 #: Clé courte -> libellé affiché. L'ordre définit la navigation.
 DAYS: Final[tuple[tuple[str, str], ...]] = (
@@ -78,6 +79,12 @@ def resolve_plan_file(
         return Path(from_env).expanduser()
     base = data_file.parent if data_file is not None else user_data_dir()
     return base / PLAN_FILENAME
+
+
+def resolve_llm_config_file(data_file: Path | None = None) -> Path:
+    """Fichier de réglages du fournisseur LLM (à côté de la progression)."""
+    base = data_file.parent if data_file is not None else user_data_dir()
+    return base / LLM_CONFIG_FILENAME
 
 
 def asset_path(name: str) -> Path:

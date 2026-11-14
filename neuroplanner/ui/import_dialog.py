@@ -3,8 +3,9 @@
 Deux entrées possibles, un seul pipeline :
 
 1. **coller une table des matières** (ou toute liste de chapitres) ;
-2. **demander à un LLM local** (Ollama) de proposer les chapitres — le résultat
-   est écrit dans la zone de texte pour relecture, jamais appliqué en aveugle.
+2. **demander à un LLM** — local (Ollama) ou hébergé à palier gratuit (Groq,
+   Gemini, Mistral) — de proposer les chapitres. Le résultat est écrit dans la
+   zone de texte pour relecture, jamais appliqué en aveugle.
 
 Le planning lui-même est construit par :mod:`neuroplanner.services.generation`,
 de façon déterministe et vérifiable dans l'aperçu avant application.
@@ -21,16 +22,19 @@ from tkinter import messagebox
 import customtkinter as ctk
 
 from neuroplanner.config import DAY_LABELS
+from neuroplanner.data.llm_config import LlmConfig, LlmConfigStore
 from neuroplanner.data.plan_store import PlanStore
 from neuroplanner.models import Chapter
 from neuroplanner.services.chapters import format_chapters, parse_chapters
 from neuroplanner.services.generation import build_week, describe_week
-from neuroplanner.services.llm import (
-    DEFAULT_CHAPTER_COUNT,
-    LlmError,
-    LlmSettings,
-    OllamaClient,
-    generate_outline,
+from neuroplanner.services.llm import DEFAULT_CHAPTER_COUNT, LlmError, LlmSettings, generate_outline
+from neuroplanner.services.providers import (
+    PROVIDERS,
+    Provider,
+    create_client,
+    get_provider,
+    provider_from_label,
+    settings_for,
 )
 from neuroplanner.theme import PALETTE, font
 from neuroplanner.ui.dialogs import ModalDialog, _DialogFooter
@@ -56,20 +60,25 @@ class ImportDialog(ModalDialog):
         master: ctk.CTkBaseClass,
         plan: PlanStore,
         *,
-        client_factory: Callable[[LlmSettings], OllamaClient] | None = None,
+        client_factory: Callable[[LlmSettings], object] | None = None,
+        config_path=None,
     ) -> None:
         self.plan = plan
-        self._client_factory: Callable[[LlmSettings], OllamaClient] = (
-            client_factory or OllamaClient
+        self._client_factory = client_factory or create_client
+        self._config_store = LlmConfigStore(config_path) if config_path is not None else None
+        self._config: LlmConfig = (
+            self._config_store.load() if self._config_store else LlmConfig()
         )
+        self._provider: Provider = get_provider(self._config.provider)
         self._job: str | None = None
         self._worker: threading.Thread | None = None
         self._result: list[Chapter] | None = None
         self._worker_error: str | None = None
         self._previewed = False
 
-        super().__init__(master, "Importer un programme", 660, 780)
+        super().__init__(master, "Importer un programme", 680, 780)
         self._build()
+        self._apply_provider(self._provider, model=self._config.model, api_key=self._config.api_key)
         self.protocol("WM_DELETE_WINDOW", self.close)
 
     # -- construction ------------------------------------------------------ #
@@ -173,7 +182,7 @@ class ImportDialog(ModalDialog):
         head.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(
             head,
-            text="Assistant LLM (local, gratuit)",
+            text="Assistant LLM",
             anchor="w",
             font=font(11, "bold"),
             text_color=PALETTE.text,
@@ -185,7 +194,9 @@ class ImportDialog(ModalDialog):
 
         form = ctk.CTkFrame(box, fg_color="transparent")
         form.grid(row=1, column=0, sticky="ew", padx=14, pady=(6, 12))
-        form.grid_columnconfigure(0, weight=1)
+        form.grid_columnconfigure(0, weight=3)
+        form.grid_columnconfigure(1, weight=4)
+        form.grid_columnconfigure(2, weight=2)
 
         self.topic_entry = ctk.CTkEntry(
             form,
@@ -200,9 +211,27 @@ class ImportDialog(ModalDialog):
         self.topic_entry.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 6))
         self.topic_entry.bind("<Return>", lambda _event: self.generate())
 
+        self.provider_menu = ctk.CTkOptionMenu(
+            form,
+            values=[provider.label for provider in PROVIDERS],
+            height=32,
+            corner_radius=9,
+            fg_color=PALETTE.bg,
+            button_color=PALETTE.raised,
+            button_hover_color=PALETTE.border,
+            text_color=PALETTE.text,
+            dropdown_fg_color=PALETTE.card,
+            dropdown_text_color=PALETTE.text,
+            dropdown_hover_color=PALETTE.raised,
+            font=font(10),
+            dropdown_font=font(10),
+            command=self._on_provider_change,
+        )
+        self.provider_menu.grid(row=1, column=0, sticky="ew", padx=(0, 6))
+
         self.model_menu = ctk.CTkOptionMenu(
             form,
-            values=self._available_models(),
+            values=list(self._provider.models) or [self._provider.default_model],
             height=32,
             corner_radius=9,
             fg_color=PALETTE.bg,
@@ -215,15 +244,12 @@ class ImportDialog(ModalDialog):
             font=font(10),
             dropdown_font=font(10),
         )
-        self.model_menu.grid(row=1, column=0, sticky="ew", padx=(0, 6))
-        default_model = LlmSettings.from_env().model
-        values = self.model_menu.cget("values")
-        self.model_menu.set(default_model if default_model in values else values[0])
+        self.model_menu.grid(row=1, column=1, sticky="ew", padx=(0, 6))
 
         self.count_menu = ctk.CTkOptionMenu(
             form,
             values=[f"{count} chapitres" for count in CHAPTER_COUNTS],
-            width=120,
+            width=110,
             height=32,
             corner_radius=9,
             fg_color=PALETTE.bg,
@@ -236,8 +262,21 @@ class ImportDialog(ModalDialog):
             font=font(10),
             dropdown_font=font(10),
         )
-        self.count_menu.grid(row=1, column=1, sticky="ew", padx=(0, 6))
+        self.count_menu.grid(row=1, column=2, sticky="ew")
         self.count_menu.set(f"{DEFAULT_CHAPTER_COUNT} chapitres")
+
+        self.key_entry = ctk.CTkEntry(
+            form,
+            height=32,
+            corner_radius=9,
+            fg_color=PALETTE.bg,
+            border_color=PALETTE.border,
+            text_color=PALETTE.text,
+            placeholder_text="Clé API (stockée hors du dépôt)",
+            font=font(10),
+            show="•",
+        )
+        self.key_entry.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0), padx=(0, 6))
 
         self.generate_button = ctk.CTkButton(
             form,
@@ -251,12 +290,30 @@ class ImportDialog(ModalDialog):
             font=font(11, "bold"),
             command=self.generate,
         )
-        self.generate_button.grid(row=1, column=2)
+        self.generate_button.grid(row=2, column=2, sticky="ew", pady=(6, 0))
+
+        self.save_key_var = tk.BooleanVar(master=self, value=True)
+        self.save_key_check = ctk.CTkCheckBox(
+            form,
+            text="Mémoriser ce fournisseur et la clé",
+            variable=self.save_key_var,
+            checkbox_width=16,
+            checkbox_height=16,
+            corner_radius=5,
+            border_width=2,
+            border_color=PALETTE.dim,
+            fg_color=PALETTE.accent,
+            hover_color=PALETTE.accent,
+            checkmark_color=PALETTE.bg,
+            text_color=PALETTE.dim,
+            font=font(9),
+        )
+        self.save_key_check.grid(row=3, column=0, columnspan=2, sticky="w", pady=(6, 0))
 
         self.think_var = tk.BooleanVar(master=self, value=False)
-        ctk.CTkCheckBox(
+        self.think_check = ctk.CTkCheckBox(
             form,
-            text="Raisonnement étendu (modèles « thinking », plus lent)",
+            text="Raisonnement étendu",
             variable=self.think_var,
             checkbox_width=16,
             checkbox_height=16,
@@ -268,7 +325,8 @@ class ImportDialog(ModalDialog):
             checkmark_color=PALETTE.bg,
             text_color=PALETTE.dim,
             font=font(9),
-        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        )
+        self.think_check.grid(row=3, column=2, sticky="w", pady=(6, 0))
 
     def _build_destination(self, row: int) -> None:
         box = ctk.CTkFrame(self, fg_color="transparent")
@@ -364,20 +422,89 @@ class ImportDialog(ModalDialog):
         self.preview.grid(row=row, column=0, sticky="nsew", padx=24, pady=(4, 0))
         self.preview.configure(state="disabled")
 
-    # -- zone de texte ----------------------------------------------------- #
-    def _available_models(self) -> list[str]:
-        settings = LlmSettings.from_env()
+    # -- fournisseur ------------------------------------------------------- #
+    def _models_for(self, provider: Provider, api_key: str = "") -> list[str]:
+        """Modèles du fournisseur : liste réelle si possible, suggestions sinon."""
+        suggested = list(provider.models) or [provider.default_model]
+        settings = settings_for(provider.key, model=provider.default_model, api_key=api_key)
+        if provider.requires_key and not settings.api_key:
+            return suggested
         with contextlib.suppress(Exception):
-            models = self._client_factory(settings).models()
-            if models:
-                return models
-        return [settings.model]
+            found = self._client_factory(settings).models()  # type: ignore[attr-defined]
+            if found:
+                return list(dict.fromkeys([*found, *suggested]))
+        return suggested
 
+    def _apply_provider(
+        self,
+        provider: Provider,
+        *,
+        model: str = "",
+        api_key: str = "",
+    ) -> None:
+        """Applique un fournisseur : menus, champs visibles et message d'état."""
+        self._provider = provider
+        self.provider_menu.set(provider.label)
+
+        models = self._models_for(provider, api_key)
+        self.model_menu.configure(values=models)
+        chosen = (model or "").strip()
+        self.model_menu.set(chosen if chosen in models else models[0])
+
+        self.key_entry.delete(0, "end")
+        if api_key:
+            self.key_entry.insert(0, api_key)
+
+        if provider.requires_key:
+            self.key_entry.grid()
+            self.save_key_check.grid()
+        else:
+            self.key_entry.grid_remove()
+            self.save_key_check.grid_remove()
+
+        if provider.supports_think:
+            self.think_check.grid()
+        else:
+            self.think_check.grid_remove()
+
+        if provider.requires_key and not api_key:
+            self.status.configure(text="clé requise", text_color=PALETTE.orange)
+        elif provider.requires_key:
+            self.status.configure(text="clé enregistrée", text_color=PALETTE.green)
+        else:
+            self.status.configure(text="local", text_color=PALETTE.dim)
+
+    def _on_provider_change(self, label: str) -> None:
+        self.footer.clear_error()
+        provider = provider_from_label(label)
+        # La clé est propre à chaque fournisseur : on repart des variables
+        # d'environnement plutôt que de réutiliser celle du précédent.
+        self._apply_provider(provider, api_key="")
+
+    # -- zone de texte ----------------------------------------------------- #
     def settings(self) -> LlmSettings:
-        """Réglages du prochain appel : modèle choisi et raisonnement éventuel."""
-        base = LlmSettings.from_env()
-        model = self.model_menu.get().strip() or base.model
-        return LlmSettings(base_url=base.base_url, model=model, think=self.think_var.get() or None)
+        """Réglages du prochain appel, déduits des champs de l'interface."""
+        provider = self._provider
+        # Case décochée = comportement par défaut du serveur (None), pas « false ».
+        think = True if provider.supports_think and self.think_var.get() else None
+        return settings_for(
+            provider.key,
+            model=self.model_menu.get().strip(),
+            api_key=self.key_entry.get().strip(),
+            think=think,
+        )
+
+    def _remember(self, settings: LlmSettings) -> None:
+        """Mémorise fournisseur, modèle et clé si l'utilisateur le demande."""
+        if self._config_store is None or not self.save_key_var.get():
+            return
+        self._config_store.save(
+            LlmConfig(
+                provider=settings.provider,
+                model=settings.model,
+                api_key=settings.api_key,
+            )
+        )
 
     def _clear_placeholder(self, _event: object = None) -> None:
         if self._placeholder_active:
@@ -421,13 +548,21 @@ class ImportDialog(ModalDialog):
             self.footer.show_error("Décris le sujet avant de lancer la génération.")
             return
 
+        settings = self.settings()
+        if self._provider.requires_key and not settings.api_key:
+            self.footer.show_error(
+                f"Colle ta clé {self._provider.label} (gratuite : {self._provider.docs_url})."
+            )
+            return
+
         self.footer.clear_error()
+        self._remember(settings)
         self._result = None
         self._worker_error = None
         self.generate_button.configure(state="disabled", text="Génération…")
-        self.status.configure(text="le modèle réfléchit…", text_color=PALETTE.muted)
+        self.status.configure(text=f"{self._provider.label} · en cours…", text_color=PALETTE.muted)
 
-        client = self._client_factory(self.settings())
+        client = self._client_factory(settings)
         count = self._selected_count()
 
         def work() -> None:

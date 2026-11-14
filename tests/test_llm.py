@@ -18,9 +18,9 @@ from neuroplanner.services.llm import (
 
 
 def fake_transport(response: dict, calls: list | None = None):
-    def transport(url: str, payload: dict, timeout: float) -> dict:
+    def transport(url: str, payload: dict | None, headers: dict, timeout: float) -> dict:
         if calls is not None:
-            calls.append((url, payload, timeout))
+            calls.append((url, payload, headers, timeout))
         return response
 
     return transport
@@ -104,7 +104,7 @@ def test_complete_posts_to_generate_endpoint() -> None:
     )
     assert client.complete("salut") == "ok"
 
-    url, payload, _timeout = calls[0]
+    url, payload, _headers, _timeout = calls[0]
     assert url.endswith("/api/generate")
     assert payload["model"] == "test-model"
     assert payload["stream"] is False
@@ -141,27 +141,24 @@ def test_models_parses_tags() -> None:
 
 
 def test_models_returns_empty_when_server_is_down() -> None:
-    def broken(url: str, payload: dict, timeout: float) -> dict:
+    def broken(url: str, payload: dict | None, headers: dict, timeout: float) -> dict:
         raise LlmError("serveur absent")
 
     assert OllamaClient(transport=broken).models() == []
 
 
 def test_connection_error_message_is_actionable(monkeypatch: pytest.MonkeyPatch) -> None:
-    from neuroplanner.services.llm import _post_json
-
     def boom(*args, **kwargs):
         raise urllib.error.URLError(ConnectionRefusedError("refusé"))
 
     monkeypatch.setattr("urllib.request.urlopen", boom)
+    client = OllamaClient(LlmSettings())
     with pytest.raises(LlmError, match="ollama serve"):
-        _post_json("http://localhost:11434/api/generate", {"model": "m"}, 1.0)
+        client.complete("x")
 
 
-def test_http_404_mentions_pull(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_http_404_mentions_the_missing_model(monkeypatch: pytest.MonkeyPatch) -> None:
     import io
-
-    from neuroplanner.services.llm import _post_json
 
     def boom(*args, **kwargs):
         raise urllib.error.HTTPError(
@@ -169,12 +166,13 @@ def test_http_404_mentions_pull(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
     monkeypatch.setattr("urllib.request.urlopen", boom)
-    with pytest.raises(LlmError, match="ollama pull"):
-        _post_json("http://localhost:11434/api/generate", {"model": "m"}, 1.0)
+    client = OllamaClient(LlmSettings())
+    with pytest.raises(LlmError, match="Modèle ou URL introuvable"):
+        client.complete("x")
 
 
 def test_invalid_json_from_server_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
-    from neuroplanner.services.llm import _post_json
+    from neuroplanner.services.llm import request_json
 
     class Response:
         def __enter__(self):
@@ -188,7 +186,7 @@ def test_invalid_json_from_server_is_reported(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: Response())
     with pytest.raises(LlmError, match="illisible"):
-        _post_json("http://localhost:11434/api/generate", {"model": "m"}, 1.0)
+        request_json("http://localhost:11434/api/generate", {"model": "m"}, {}, 1.0)
 
 
 # --------------------------------------------------------------------------- #

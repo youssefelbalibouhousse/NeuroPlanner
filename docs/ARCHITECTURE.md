@@ -20,9 +20,9 @@ de données, le format du plan et les recettes pour les changements fréquents.
 │ services/        │ │ data/           │ │ data/               │
 │  stats  (purs)   │ │  plan_store     │ │  store              │
 │  countdown (pur) │ │  curriculum     │ │  (progression)      │
-│  chapters        │ │  presets        │ │  jsonfile (E/S)     │
-│  generation      │ └─────────────────┘ └─────────────────────┘
-│  llm             │
+│  chapters        │ │  presets        │ │  llm_config         │
+│  generation      │ └─────────────────┘ │  jsonfile (E/S)     │
+│  llm  providers  │                     └─────────────────────┘
 │  sound           │
 └──────▲───────────┘
        │
@@ -131,7 +131,10 @@ décale jamais les coches existantes.
 ```text
  texte collé  ─┐
                ├─► services/chapters.parse_chapters ─┐
- LLM (Ollama) ─┘                                    │  list[Chapter]
+ LLM            │                                   │  list[Chapter]
+  ├─ Ollama local ─────────────────────────────────┐ │
+  └─ Groq / Gemini / Mistral (OpenAI-compatible) ─┴─┘
+     via services/providers.create_client(settings)
                                                     ▼
                               services/generation.build_week(domain, revision)
                                                     │  dict[jour] -> tuple[Block]
@@ -151,33 +154,55 @@ Trois décisions structurent l'implémentation :
    valide ; l'algorithme garantit les 5 h/jour et la présence de tous les chapitres.
 2. **Rien n'est appliqué sans relecture** : la sortie du modèle atterrit dans la
    zone de texte, puis l'aperçu montre les 30 tâches avant confirmation.
-3. **Aucun appel réseau dans les tests** : `OllamaClient` accepte un `transport`
-   injectable (`Callable[[url, payload, timeout], dict]`).
+3. **Aucun appel réseau dans les tests** : les clients acceptent un `transport`
+   injectable (`Callable[[url, payload, headers, timeout], dict]`), et les tests
+   d'erreur HTTP monkeypatchent `urllib.request.urlopen`.
 
-### Contrat à respecter pour un autre fournisseur
+### Fournisseurs
 
-N'importe quel client exposant `complete(prompt: str) -> str` fonctionne
-(`generate_outline` l'accepte en paramètre). Pour un fournisseur hébergé, il suffit
-de traduire la réponse vers le même texte, le reste du pipeline est inchangé :
+`services/providers.py` contient un registre : ajouter un fournisseur = ajouter une
+entrée dans `PROVIDERS` (clé, libellé, `kind`, URL de base, variable
+d'environnement, modèles suggérés, URL d'inscription). Deux `kind` suffisent :
 
-```python
-class GroqClient:            # même contrat que OllamaClient
-    def complete(self, prompt: str) -> str: ...
-    def models(self) -> list[str]: ...
-```
+| `kind` | Client | Exemples |
+|---|---|---|
+| `ollama` | `OllamaClient` (`/api/generate`) | Ollama local |
+| `openai` | `OpenAiCompatClient` (`/chat/completions`) | Groq, Gemini, Mistral, OpenRouter… |
 
-Le prompt (`llm.build_prompt`) impose un tableau JSON `[{"titre": …, "minutes": …}]`.
-`parse_outline` accepte aussi une liste à puces et privilégie les tableaux d'objets
-portant une clé `titre`, pour ne pas confondre un brouillon de raisonnement
-(`[étape 1]`) avec la réponse finale.
+Tout client exposant `complete(prompt) -> str` et `models() -> list[str]` convient
+(`generate_outline` l'accepte en paramètre).
+
+### Clé d'API : où elle vit, comment elle est protégée
+
+1. **Résolution** — `resolve_settings()` : fichier local > variables
+   d'environnement > défauts. La variable générique `NEUROPLANNER_LLM_KEY` évite
+   d'écrire quoi que ce soit sur disque si tu préfères.
+2. **Stockage** — `data/llm_config.py` écrit `llm_settings.json` à côté de la
+   progression (jamais dans le dépôt, ligne prévue dans `.gitignore`), avec
+   `chmod 0600` lorsque les permissions POSIX existent.
+3. **Confidentialité** — le champ `api_key` est `repr=False` (il n'apparaît pas
+   dans les logs), `masked_key` ne montre que les 4 derniers caractères, et
+   `llm.redact()` remplace la clé (et tout motif `sk…`/`gsk…`/`AIza…`) dans les
+   messages d'erreur : une API qui renverrait la clé dans son corps de réponse ne
+   peut pas la propager jusqu'à l'écran.
+
+### Erreurs traduites
+
+| HTTP | Message |
+|---|---|
+| 401 / 403 | « Clé refusée par <fournisseur> : vérifie qu'elle est valide et active. » |
+| 404 | « Modèle ou URL introuvable chez <fournisseur>. » |
+| 429 | « Quota atteint : attends une minute, change de modèle, ou reviens au local. » |
+| 5xx | « <fournisseur> est momentanément indisponible. » |
+| hors ligne | « Impossible de joindre <fournisseur> » + conseil (`ollama serve` pour Ollama) |
 
 ### Modèles et mode raisonnement
 
 `LlmSettings(think=True)` transmet `"think": true` à Ollama (modèles `thinking`).
 Mesuré sur la machine de développement, 6 chapitres : `qwen2.5:3b` ≈ 17 s,
 `gemma4` ≈ 142 s, `gemma4` + raisonnement ≈ 161 s. Le raisonnement améliore
-l'enchaînement des chapitres ; il est donc proposé en option, jamais imposé.
-Timeout par défaut : 300 s (`LlmSettings.timeout`).
+l'enchaînement des chapitres ; il est donc proposé en option, jamais imposé, et
+masqué pour les fournisseurs hébergés (non supporté). Timeout par défaut : 300 s.
 
 ## Détails d'implémentation notables
 
@@ -213,6 +238,8 @@ Timeout par défaut : 300 s (`LlmSettings.timeout`).
 | `test_chapters.py` | table des matières : puces, numéros, durées, doublons | non |
 | `test_generation.py` | 5 h/jour, contenu complet, reliquats, déterminisme | non |
 | `test_llm.py` | prompt, extraction JSON, erreurs réseau (transport factice) | non |
+| `test_providers.py` | registre, réglages, client OpenAI-compatible, redaction | non |
+| `test_llm_config.py` | fichier de réglages, clé masquée, permissions | non |
 | `test_stats.py` | agrégations, bornes, domaines vides | non |
 | `test_countdown.py` | pause/reprise/fin, horloge simulée | non |
 | `test_store.py` | écriture atomique, quarantaine, `prune`/`forget` | non |
@@ -222,7 +249,7 @@ Timeout par défaut : 300 s (`LlmSettings.timeout`).
 | `test_ui_import.py` | import : aperçu, application, assistant LLM (stub), prune | **oui** |
 
 ```powershell
-python -m pytest                  # tout (260 tests)
+python -m pytest                  # tout (297 tests, 1 ignoré sous Windows)
 python -m pytest -m "not gui"     # sans écran (utilisé par la CI)
 ```
 

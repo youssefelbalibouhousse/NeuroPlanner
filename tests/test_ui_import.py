@@ -12,6 +12,7 @@ from neuroplanner.config import DAY_KEYS  # noqa: E402
 from neuroplanner.models import Chapter  # noqa: E402
 from neuroplanner.services.generation import MINUTES_PER_DAY  # noqa: E402
 from neuroplanner.services.llm import LlmSettings  # noqa: E402
+from neuroplanner.services.providers import get_provider  # noqa: E402
 from neuroplanner.ui.import_dialog import ImportDialog  # noqa: E402
 
 pytestmark = pytest.mark.gui
@@ -31,6 +32,7 @@ class StubLlm:
     def __init__(self, payload: str = '[{"titre": "Suites", "minutes": 120}]', **_kwargs) -> None:
         self.payload = payload
         self.calls = 0
+        self.settings_seen: list[LlmSettings] = []
 
     def models(self) -> list[str]:
         return ["stub:1"]
@@ -40,9 +42,14 @@ class StubLlm:
         return self.payload
 
 
-def make_dialog(app, client: StubLlm | None = None) -> ImportDialog:
+def make_dialog(app, client: StubLlm | None = None, config_path=None) -> ImportDialog:
     stub = client or StubLlm()
-    dialog = ImportDialog(app, app.plan, client_factory=lambda _settings: stub)
+
+    def factory(settings):
+        stub.settings_seen.append(settings)
+        return stub
+
+    dialog = ImportDialog(app, app.plan, client_factory=factory, config_path=config_path)
     pump(dialog)
     return dialog
 
@@ -241,7 +248,7 @@ def test_app_refreshes_after_import(app, monkeypatch: pytest.MonkeyPatch) -> Non
     """Le vrai dialogue appliqué doit reconstruire la vue du jour et le graphique."""
 
     class ApplyingDialog:
-        def __init__(self, master, plan) -> None:
+        def __init__(self, master, plan, **_kwargs) -> None:
             self.plan = plan
 
         def run(self) -> bool:
@@ -281,3 +288,134 @@ def test_chapter_model_round_trip() -> None:
     """Le dialogue travaille avec des objets Chapter, jamais des chaînes brutes."""
     chapters = [Chapter("Suites", 90)]
     assert chapters[0].minutes == 90
+
+
+# --------------------------------------------------------------------------- #
+# Fournisseurs hébergés (paliers gratuits)
+# --------------------------------------------------------------------------- #
+def wait_for_generation(dialog: ImportDialog, timeout: float = 5.0) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        pump(dialog, 1)
+        time.sleep(0.02)
+        if dialog._worker is not None and not dialog._worker.is_alive() and dialog._job is None:
+            return
+
+
+def test_selecting_a_hosted_provider_reveals_the_key_field(app) -> None:
+    dialog = make_dialog(app)
+    try:
+        assert dialog.key_entry.winfo_manager() == ""  # Ollama : pas de clé
+        assert dialog.think_check.winfo_manager() == "grid"
+
+        dialog.provider_menu.set("Groq (gratuit)")
+        dialog._on_provider_change("Groq (gratuit)")
+        pump(dialog)
+
+        assert dialog._provider.key == "groq"
+        assert dialog.key_entry.winfo_manager() == "grid"
+        assert dialog.save_key_check.winfo_manager() == "grid"
+        assert dialog.think_check.winfo_manager() == ""  # pas de « think » hébergé
+        assert "llama" in dialog.model_menu.get()
+    finally:
+        dialog.close()
+
+
+def test_hosted_provider_requires_a_key_before_calling(app) -> None:
+    stub = StubLlm()
+    dialog = make_dialog(app, stub)
+    try:
+        dialog._apply_provider(get_provider("groq"), api_key="")
+        dialog.topic_entry.insert(0, "Analyse réelle")
+        dialog.generate()
+
+        assert stub.calls == 0
+        assert "console.groq.com/keys" in dialog.footer.error.cget("text")
+        assert dialog._worker is None
+    finally:
+        dialog.close()
+
+
+def test_generation_sends_key_and_model_to_the_client(app) -> None:
+    stub = StubLlm('[{"titre": "Suites", "minutes": 90}]')
+    dialog = make_dialog(app, stub)
+    try:
+        dialog._apply_provider(get_provider("gemini"), model="gemini-2.5-flash")
+        dialog.key_entry.delete(0, "end")
+        dialog.key_entry.insert(0, "AIza_test_key")
+        dialog.topic_entry.insert(0, "Analyse réelle")
+
+        dialog.generate()
+        wait_for_generation(dialog)
+
+        assert stub.calls == 1
+        sent = stub.settings_seen[-1]
+        assert sent.provider == "gemini"
+        assert sent.model == "gemini-2.5-flash"
+        assert sent.api_key == "AIza_test_key"
+        assert sent.base_url.startswith("https://generativelanguage.googleapis.com")
+        assert "Suites" in dialog.chapters_text()
+    finally:
+        dialog.close()
+
+
+def test_remembered_configuration_is_persisted(app, tmp_path) -> None:
+    from neuroplanner.data.llm_config import LlmConfigStore
+
+    config_path = tmp_path / "llm_settings.json"
+    stub = StubLlm()
+    dialog = make_dialog(app, stub, config_path=config_path)
+    try:
+        dialog._apply_provider(get_provider("groq"), model="llama-3.1-8b-instant")
+        dialog.key_entry.delete(0, "end")
+        dialog.key_entry.insert(0, "gsk_memorisee")
+        dialog.save_key_var.set(True)
+        dialog.topic_entry.insert(0, "Analyse réelle")
+
+        dialog.generate()
+        wait_for_generation(dialog)
+    finally:
+        dialog.close()
+
+    saved = LlmConfigStore(config_path).load()
+    assert (saved.provider, saved.model, saved.api_key) == (
+        "groq",
+        "llama-3.1-8b-instant",
+        "gsk_memorisee",
+    )
+
+
+def test_configuration_is_restored_when_reopening(app, tmp_path) -> None:
+    from neuroplanner.data.llm_config import LlmConfig, LlmConfigStore
+
+    config_path = tmp_path / "llm_settings.json"
+    LlmConfigStore(config_path).save(
+        LlmConfig(provider="mistral", model="open-mistral-nemo", api_key="mk_stored")
+    )
+
+    dialog = make_dialog(app, config_path=config_path)
+    try:
+        assert dialog._provider.key == "mistral"
+        assert dialog.model_menu.get() == "open-mistral-nemo"
+        assert dialog.key_entry.get() == "mk_stored"
+        assert dialog.settings().api_key == "mk_stored"
+        assert dialog.status.cget("text") == "clé enregistrée"
+    finally:
+        dialog.close()
+
+
+def test_switching_back_to_ollama_hides_the_key(app) -> None:
+    dialog = make_dialog(app)
+    try:
+        dialog._apply_provider(get_provider("groq"), api_key="gsk_x")
+        pump(dialog)
+        assert dialog.key_entry.winfo_manager() == "grid"
+
+        dialog._on_provider_change("Ollama (local)")
+        pump(dialog)
+
+        assert dialog._provider.key == "ollama"
+        assert dialog.key_entry.winfo_manager() == ""
+        assert dialog.settings().api_key == ""
+    finally:
+        dialog.close()

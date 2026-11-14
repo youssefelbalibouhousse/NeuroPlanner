@@ -16,6 +16,7 @@ from neuroplanner.config import (
     asset_path,
     initial_day,
     resolve_data_file,
+    resolve_llm_config_file,
     resolve_plan_file,
 )
 from neuroplanner.data.plan_store import PlanStore
@@ -188,8 +189,12 @@ class NeuroPlanner(ctk.CTk):
             self.on_plan_changed()
 
     def import_program(self) -> None:
-        """Ouvre l'assistant d'import (table des matières ou LLM local)."""
-        dialog = ImportDialog(self, self.plan)
+        """Ouvre l'assistant d'import (table des matières ou LLM)."""
+        dialog = ImportDialog(
+            self,
+            self.plan,
+            config_path=resolve_llm_config_file(self.store.path),
+        )
         if dialog.run():
             self.on_plan_changed()
 

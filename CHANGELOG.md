@@ -3,6 +3,37 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ;
 le projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.3.0] — 2026-11-15
+
+### Ajouté
+
+- **Fournisseurs hébergés à palier gratuit** : Groq, Gemini et Mistral, derrière le
+  même contrat que le modèle local. Un seul client (`OpenAiCompatClient`) suffit,
+  les trois exposant une API `chat/completions` compatible OpenAI.
+- Registre de fournisseurs (`services/providers.py`) : ajouter un fournisseur =
+  ajouter une entrée (URL de base, variable d'environnement, modèles suggérés).
+- Sélecteur de fournisseur et champ de clé masqué dans le dialogue d'import ;
+  liste des modèles récupérée auprès du fournisseur quand la clé est valide.
+- Mémorisation optionnelle du fournisseur et de la clé dans `llm_settings.json`
+  (hors dépôt, `0600` là où POSIX le permet), ou via variables d'environnement.
+- Erreurs traduites et actionnables : clé refusée (401/403), modèle introuvable
+  (404), quota atteint (429), service indisponible (5xx), serveur injoignable.
+- **Redaction** : la clé n'apparaît jamais dans un message d'erreur, même si l'API
+  la renvoie dans son corps de réponse.
+
+### Modifié
+
+- `LlmSettings` porte désormais `provider` et `api_key` ; `resolve_settings()`
+  applique l'ordre fichier local > variables d'environnement > défauts.
+- `generate_outline()` instancie le bon client via `providers.create_client()`.
+- Transport HTTP unifié : `(url, payload, headers, timeout)`, partagé par les deux
+  clients et mockable dans les tests.
+
+### Technique
+
+- 297 tests (dont 56 sur les fournisseurs, les réglages et le dialogue d'import) ;
+  aucun test ne contacte le réseau.
+
 ## [1.2.0] — 2026-11-15
 
 ### Ajouté

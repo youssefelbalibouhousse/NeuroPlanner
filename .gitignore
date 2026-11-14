@@ -33,6 +33,8 @@ neuro_progress.corrupt.json
 neuro_plan.json
 neuro_plan.tmp
 neuro_plan.corrupt.json
+# Clé d'API éventuelle du fournisseur LLM : ne doit JAMAIS être publiée.
+llm_settings.json
 *.tmp
 *.corrupt.json
 
