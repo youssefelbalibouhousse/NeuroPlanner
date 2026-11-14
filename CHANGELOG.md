@@ -3,6 +3,22 @@
 Format inspiré de [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/) ;
 le projet suit le [versionnage sémantique](https://semver.org/lang/fr/).
 
+## [1.3.4] — 2026-11-15
+
+### Corrigé
+
+- **Barre latérale inaccessible en bas** : sur un écran bas (fenêtre de 466 px
+  logiques), les boutons « Importer un programme… », « Domaines… » et
+  « Réinitialiser la semaine » sortaient de la fenêtre et restaient inatteignables.
+  La barre est désormais scindée en deux zones :
+  - `Sidebar.body` (défilante) : marque, les 6 jours et la carte « PROGRESSION » ;
+  - `Sidebar.footer` (ancrée en bas) : les trois actions et le rappel des
+    raccourcis, **toujours visibles**, sans rien faire défiler.
+  Sur un grand écran, tout tient sans défilement ; sur un écran bas, la molette
+  atteint les jours suivants et le résumé.
+- 329 tests (+2) : actions hors de la zone défilante en fenêtre courte, dernier
+  jour et résumé atteignables après défilement.
+
 ## [1.3.3] — 2026-11-15
 
 ### Ajouté

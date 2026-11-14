@@ -21,6 +21,8 @@ d'encodage/consolidation/récupération, graphique de refocalisation par pilier 
 ## Fonctionnalités
 
 - **Navigation Lundi → Samedi**, 4 blocs horaires par jour (07:30 → 14:30), 5 h au total.
+  La barre latérale défile si besoin, mais les actions (« Domaines… », « Importer… »,
+  « Réinitialiser ») restent ancrées en bas : jamais coupées, même sur un écran bas.
 - **Checklists interactives** : chaque coche est écrite immédiatement sur disque.
 - **Domaines d'apprentissage modifiables** : ajouter, renommer, recolorer, supprimer un
   pilier (la suppression retire ses tâches après confirmation).
@@ -193,7 +195,7 @@ NeuroPlanner/
 │   │                           # timer_panel, chart, header, dialogs,
 │   │                           # import_dialog, widgets
 │   └── assets/                 # icône et logo
-├── tests/                      # 327 tests (dont intégration GUI)
+├── tests/                      # 329 tests (dont intégration GUI)
 ├── docs/ARCHITECTURE.md        # modules, format du plan, pipeline d'import
 └── tools/
     ├── make_icon.py            # régénère l'icône

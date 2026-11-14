@@ -14,6 +14,8 @@ import pytest
 
 pytest.importorskip("customtkinter")
 
+import customtkinter as ctk  # noqa: E402
+
 from neuroplanner.config import DAY_KEYS  # noqa: E402
 from neuroplanner.data.curriculum import WEEK, WEEK_DAYS  # noqa: E402
 from neuroplanner.data.store import FOCUS_SESSION_SECONDS  # noqa: E402
@@ -83,6 +85,41 @@ def test_keyboard_shortcut_changes_day(app) -> None:
     app.event_generate("<Control-Key-2>")
     pump(app)
     assert app.current_day == "mar"
+
+
+def test_sidebar_actions_stay_visible_in_a_short_window(app) -> None:
+    """Sur un écran bas, les actions ne doivent jamais être coupées."""
+    app.geometry("820x466")
+    pump(app, 8)
+
+    sidebar = app.sidebar
+    assert sidebar.footer.winfo_y() + sidebar.footer.winfo_height() <= sidebar.winfo_height()
+    for button in (sidebar.import_button, sidebar.domains_button):
+        assert str(button).startswith(str(sidebar.footer))
+        assert not str(button).startswith(str(sidebar.body))
+
+
+def test_sidebar_scrolls_down_to_the_last_day_and_summary(app) -> None:
+    """Les jours et le résumé défilent : tout reste atteignable."""
+    app.geometry("820x466")
+    pump(app, 8)
+
+    body = app.sidebar.body
+    canvas = body._parent_canvas
+    assert isinstance(body, ctk.CTkScrollableFrame)
+    assert canvas.bbox("all")[3] > canvas.winfo_height()  # le contenu dépasse : ça défile
+
+    canvas.yview_moveto(1.0)
+    pump(app, 4)
+    top = canvas.winfo_rooty()
+    height = canvas.winfo_height()
+
+    def visible(widget) -> bool:
+        offset = widget.winfo_rooty() - top
+        return offset >= 0 and offset + widget.winfo_height() <= height
+
+    assert visible(app.sidebar.nav_items[DAY_KEYS[-1]])
+    assert visible(app.sidebar.percent_label.master)  # carte « PROGRESSION »
 
 
 def test_unknown_day_is_ignored(app) -> None:

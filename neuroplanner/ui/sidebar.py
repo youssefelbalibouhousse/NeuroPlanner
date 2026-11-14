@@ -77,7 +77,7 @@ class DayNavItem(ctk.CTkFrame):
 
 
 class Sidebar(ctk.CTkFrame):
-    """Barre latérale : marque, navigation des 6 jours, résumé, réinitialisation."""
+    """Barre latérale : marque, jours et résumé défilants ; actions ancrées en bas."""
 
     def __init__(
         self,
@@ -89,9 +89,25 @@ class Sidebar(ctk.CTkFrame):
     ) -> None:
         super().__init__(master, fg_color=PALETTE.sidebar, corner_radius=0)
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(3, weight=1)
+        self.grid_rowconfigure(0, weight=1)
 
         self.nav_items: dict[str, DayNavItem] = {}
+
+        # Les jours et le résumé défilent : sur un écran bas, tout ne tient pas.
+        self.body = ctk.CTkScrollableFrame(
+            self,
+            fg_color="transparent",
+            corner_radius=0,
+            scrollbar_button_color=PALETTE.border,
+            scrollbar_button_hover_color=PALETTE.raised,
+        )
+        self.body.grid(row=0, column=0, sticky="nsew")
+        self.body.grid_columnconfigure(0, weight=1)
+
+        # Actions ancrées en bas : accessibles sans défiler, quelle que soit la hauteur.
+        self.footer = ctk.CTkFrame(self, fg_color="transparent")
+        self.footer.grid(row=1, column=0, sticky="ew")
+        self.footer.grid_columnconfigure(0, weight=1)
 
         self._build_brand()
         self._build_nav(on_select)
@@ -100,7 +116,7 @@ class Sidebar(ctk.CTkFrame):
 
     # -- construction ------------------------------------------------------ #
     def _build_brand(self) -> None:
-        brand = ctk.CTkFrame(self, fg_color="transparent")
+        brand = ctk.CTkFrame(self.body, fg_color="transparent")
         brand.grid(row=0, column=0, sticky="ew", padx=18, pady=(24, 18))
         brand.grid_columnconfigure(1, weight=1)
 
@@ -122,11 +138,11 @@ class Sidebar(ctk.CTkFrame):
         ).grid(row=1, column=1, sticky="w")
 
         ctk.CTkLabel(
-            self, text="SEMAINE", anchor="w", font=font(9, "bold"), text_color=PALETTE.dim
+            self.body, text="SEMAINE", anchor="w", font=font(9, "bold"), text_color=PALETTE.dim
         ).grid(row=1, column=0, sticky="w", padx=24)
 
     def _build_nav(self, on_select: Callable[[str], None]) -> None:
-        nav = ctk.CTkFrame(self, fg_color="transparent")
+        nav = ctk.CTkFrame(self.body, fg_color="transparent")
         nav.grid(row=2, column=0, sticky="ew", padx=10, pady=(8, 0))
         nav.grid_columnconfigure(0, weight=1)
         for index, (day_key, label) in enumerate(DAYS):
@@ -136,13 +152,13 @@ class Sidebar(ctk.CTkFrame):
 
     def _build_summary(self) -> None:
         summary = ctk.CTkFrame(
-            self,
+            self.body,
             fg_color=PALETTE.card,
             corner_radius=14,
             border_width=1,
             border_color=PALETTE.border,
         )
-        summary.grid(row=4, column=0, sticky="ew", padx=14, pady=(0, 10))
+        summary.grid(row=3, column=0, sticky="ew", padx=14, pady=(12, 16))
         summary.grid_columnconfigure(0, weight=1)
 
         ctk.CTkLabel(
@@ -169,7 +185,7 @@ class Sidebar(ctk.CTkFrame):
         on_import: Callable[[], None] | None = None,
     ) -> None:
         self.import_button = ctk.CTkButton(
-            self,
+            self.footer,
             text="Importer un programme…",
             height=38,
             corner_radius=11,
@@ -181,12 +197,12 @@ class Sidebar(ctk.CTkFrame):
             font=font(11),
             command=on_import,
         )
-        self.import_button.grid(row=5, column=0, sticky="ew", padx=14, pady=(0, 8))
+        self.import_button.grid(row=0, column=0, sticky="ew", padx=14, pady=(0, 8))
         if on_import is None:
             self.import_button.grid_remove()
 
         self.domains_button = ctk.CTkButton(
-            self,
+            self.footer,
             text="Domaines…",
             height=38,
             corner_radius=11,
@@ -198,12 +214,12 @@ class Sidebar(ctk.CTkFrame):
             font=font(11, "bold"),
             command=on_manage_domains,
         )
-        self.domains_button.grid(row=6, column=0, sticky="ew", padx=14, pady=(0, 8))
+        self.domains_button.grid(row=1, column=0, sticky="ew", padx=14, pady=(0, 8))
         if on_manage_domains is None:
             self.domains_button.grid_remove()
 
         ctk.CTkButton(
-            self,
+            self.footer,
             text="Réinitialiser la semaine",
             height=38,
             corner_radius=11,
@@ -214,11 +230,11 @@ class Sidebar(ctk.CTkFrame):
             text_color=PALETTE.muted,
             font=font(11),
             command=on_reset,
-        ).grid(row=7, column=0, sticky="ew", padx=14, pady=(0, 12))
+        ).grid(row=2, column=0, sticky="ew", padx=14, pady=(0, 12))
 
         ctk.CTkLabel(
-            self, text="Ctrl + 1…6 : changer de jour", font=font(9), text_color=PALETTE.dim
-        ).grid(row=8, column=0, pady=(0, 16))
+            self.footer, text="Ctrl + 1…6 : changer de jour", font=font(9), text_color=PALETTE.dim
+        ).grid(row=3, column=0, pady=(0, 16))
 
     # -- mise à jour ------------------------------------------------------- #
     def update_day(self, day_key: str, progress: Progress, *, selected: bool) -> None:

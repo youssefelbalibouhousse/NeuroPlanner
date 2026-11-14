@@ -220,8 +220,11 @@ masqué pour les fournisseurs hébergés (non supporté). Timeout par défaut : 
   fixe donc la taille **physique** de la fenêtre via `tk.Tk.geometry` tout en
   gardant des dimensions logiques cohérentes. Les dialogues font de même dans
   `ModalDialog._center()`.
-- **Panneaux défilants** : la colonne de droite est un `CTkScrollableFrame` et la
-  liste des domaines aussi : sur un écran bas, rien n'est coupé.
+- **Panneaux défilants** : la colonne de droite, la liste des domaines et la
+  **barre latérale** sont des `CTkScrollableFrame` : sur un écran bas, rien n'est
+  coupé. Dans la barre latérale, seuls la marque, les jours et la carte
+  « PROGRESSION » défilent (`Sidebar.body`) ; les trois actions sont ancrées dans
+  `Sidebar.footer`, donc toujours visibles sans défiler.
 - **Domaines vides** : `stats.domain_progress(..., order=plan.domain_names)`
   renvoie **tous** les domaines de l'ordre fourni, même sans tâche ; le graphique
   les affiche en gris avec la mention « vide » plutôt qu'en rouge (0 % serait
@@ -250,7 +253,7 @@ masqué pour les fournisseurs hébergés (non supporté). Timeout par défaut : 
 | `test_ui_import.py` | import : aperçu, application, assistant LLM (stub), prune | **oui** |
 
 ```powershell
-python -m pytest                  # tout (327 tests, 1 ignoré sous Windows)
+python -m pytest                  # tout (329 tests, 1 ignoré sous Windows)
 python -m pytest -m "not gui"     # sans écran (utilisé par la CI)
 ```
 
